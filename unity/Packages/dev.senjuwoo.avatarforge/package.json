@@ -1,0 +1,10 @@
+{
+  "name": "dev.senjuwoo.avatarforge",
+  "version": "0.1.0",
+  "displayName": "AvatarForge",
+  "description": "Import AvatarForge conversions, preserve secondary bones, and prepare a reviewed VRChat avatar prefab.",
+  "unity": "2022.3",
+  "author": { "name": "SenjuWoo", "url": "https://github.com/SenjuWoo" },
+  "license": "MIT",
+  "keywords": ["avatar", "vrchat", "fbx", "physbones"]
+}

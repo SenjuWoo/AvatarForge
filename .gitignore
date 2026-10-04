@@ -1,0 +1,17 @@
+.runtime/
+.local/
+outputs/
+validation/
+.validation/
+dist/
+__pycache__/
+*.pyc
+.codex/
+.agents/
+Library/
+Temp/
+Logs/
+obj/
+UserSettings/
+*.blend1
+.DS_Store

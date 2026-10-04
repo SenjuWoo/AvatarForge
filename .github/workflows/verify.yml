@@ -1,0 +1,59 @@
+name: Verify
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-engine:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned launcher and managed optimization tools
+        shell: powershell
+        run: |
+          .\tools\Install.ps1 -Component launcher
+          .\tools\Install.ps1 -Component optimization
+      - name: Standard library tests
+        shell: powershell
+        run: |
+          .\.runtime\python\python.exe -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\.runtime\python\python.exe tools\check_contract.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check web/app.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Parse PowerShell installer
+        shell: powershell
+        run: |
+          $errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'tools\Install.ps1'),[ref]$null,[ref]$errors)
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+      - name: Installer receipts and recovery regression
+        shell: powershell
+        run: .\tests\test_installer.ps1
+  blender-roundtrip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified core and importer tools on a fresh runner
+        shell: powershell
+        run: |
+          .\tools\Install.ps1 -Component core
+          .\tools\Install.ps1 -Component extended
+      - name: Real Blender preservation, atlas and bake regression
+        shell: powershell
+        run: |
+          $blender=(Get-ChildItem .runtime/blender -Recurse -Filter blender.exe | Select-Object -First 1).FullName
+          if (-not $blender) { throw 'Portable Blender was not installed' }
+          $env:BLENDER_USER_CONFIG=Join-Path $PWD 'validation\blender-profile\config'
+          $env:BLENDER_USER_SCRIPTS=Join-Path $PWD 'validation\blender-profile\scripts'
+          $env:BLENDER_USER_EXTENSIONS=Join-Path $PWD 'validation\blender-profile\extensions'
+          @($env:BLENDER_USER_CONFIG,$env:BLENDER_USER_SCRIPTS,$env:BLENDER_USER_EXTENSIONS) | ForEach-Object { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
+          & $blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python tests/blender_smoke.py -- validation/blender-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python tests/blender_addons.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python tests/blender_formats.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

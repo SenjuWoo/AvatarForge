@@ -1,0 +1,6 @@
+{
+  "name": "AvatarForge.Editor",
+  "rootNamespace": "AvatarForge.Editor",
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}
