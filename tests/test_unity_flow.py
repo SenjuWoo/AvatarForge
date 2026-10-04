@@ -39,7 +39,9 @@ class UnityFailureChecks(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="AvatarForgeUnityFlow-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # Windows TEMP can use an 8.3 alias (RUNNER~1); compare the canonical
+        # destination recorded by the app, not an alternate spelling of it.
+        self.root = Path(self.temporary.name).resolve()
         self.folder = self.root / "outputs" / "completed"
         self.folder.mkdir(parents=True)
         (self.folder / "model.fbx").write_bytes(b"generated input; never sent to an editor")

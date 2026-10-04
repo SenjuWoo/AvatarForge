@@ -1538,21 +1538,31 @@ def replace_image(tree, original, replacement, visited):
 
 
 def preview(meshes, output, report):
-    """Workbench preview needs no GPU, cloud renderer or source scripts."""
+    """Render locally on the CPU, including hosts without a graphics context."""
+    scene = bpy.context.scene
+    previous = (scene.render.engine, scene.cycles.device, scene.cycles.samples,
+                scene.cycles.use_denoising, scene.camera, scene.world,
+                scene.render.resolution_x, scene.render.resolution_y,
+                scene.render.resolution_percentage, scene.render.filepath,
+                scene.render.image_settings.file_format)
+    visibility = [(obj, obj.hide_render) for obj in scene.objects
+                  if obj.type in {"MESH", "LIGHT"}]
+    modifiers = [(modifier, modifier.show_render) for mesh in meshes
+                 for modifier in mesh.modifiers if modifier.type != "ARMATURE"]
+    camera = light = world = None
     try:
-        scene = bpy.context.scene
-        scene.render.engine = "BLENDER_WORKBENCH"
+        scene.render.engine = "CYCLES"
+        scene.cycles.device, scene.cycles.samples = "CPU", 8
+        scene.cycles.use_denoising = False
         scene.render.resolution_x = scene.render.resolution_y = 640
         scene.render.resolution_percentage = 100
         scene.render.image_settings.file_format = "PNG"
-        scene.display.shading.light = "STUDIO"
-        scene.display.shading.color_type = "MATERIAL"
-        scene.display.shading.show_shadows = True
-        scene.display.shading.show_cavity = True
         selected = set(meshes)
-        for obj in scene.objects:
+        for obj, _ in visibility:
             if obj.type == "MESH":
                 obj.hide_render = obj not in selected
+            else:
+                obj.hide_render = True
         coords = [mesh.matrix_world @ Vector(corner) for mesh in meshes for corner in mesh.bound_box]
         minimum = Vector(tuple(min(c[i] for c in coords) for i in range(3)))
         maximum = Vector(tuple(max(c[i] for c in coords) for i in range(3)))
@@ -1565,16 +1575,42 @@ def preview(meshes, output, report):
         data.type = "ORTHO"
         data.ortho_scale = max(extent, 0.1) * 1.15
         scene.camera = camera
+        world = bpy.data.worlds.new("AvatarForge_Preview")
+        world.use_nodes = True
+        world.node_tree.nodes.get("Background").inputs["Color"].default_value = (.15, .15, .15, 1)
+        scene.world = world
+        light_data = bpy.data.lights.new("AvatarForge_Preview", "AREA")
+        light = bpy.data.objects.new("AvatarForge_Preview_Light", light_data)
+        scene.collection.objects.link(light)
+        light.location = center + Vector((extent * .6, -extent * 1.5, extent * 1.5))
+        light.rotation_euler = (center - light.location).to_track_quat("-Z", "Y").to_euler()
+        light_data.energy, light_data.size = 500 * max(extent, .1) ** 2, max(extent, .1)
         # Preview is raw export geometry: modifiers omitted by FBX must not misrepresent it.
-        for mesh in meshes:
-            for modifier in mesh.modifiers:
-                if modifier.type != "ARMATURE":
-                    modifier.show_render = False
+        for modifier, _ in modifiers:
+            modifier.show_render = False
         scene.render.filepath = str(output / "preview.png")
         bpy.ops.render.render(write_still=True)
         report["preview"] = "preview.png"
+        report["preview_renderer"] = "cycles_cpu"
     except Exception as exc:
         issue(report, "info", "preview_unavailable", str(exc))
+    finally:
+        (scene.render.engine, scene.cycles.device, scene.cycles.samples,
+         scene.cycles.use_denoising, scene.camera, scene.world,
+         scene.render.resolution_x, scene.render.resolution_y,
+         scene.render.resolution_percentage, scene.render.filepath,
+         scene.render.image_settings.file_format) = previous
+        for obj, hidden in visibility:
+            obj.hide_render = hidden
+        for modifier, enabled in modifiers:
+            modifier.show_render = enabled
+        for obj, collection in ((camera, bpy.data.cameras), (light, bpy.data.lights)):
+            if obj is not None:
+                data = obj.data
+                bpy.data.objects.remove(obj, do_unlink=True)
+                collection.remove(data)
+        if world is not None:
+            bpy.data.worlds.remove(world)
 
 
 def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report):

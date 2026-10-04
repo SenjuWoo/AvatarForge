@@ -31,6 +31,7 @@ The public regression generates its own assets and uses real Blender operations:
 - Deletion masks applied across every shape frame, retained skin weights and an unmasked mesh backup checked after reopening the saved Blender file.
 - Render UV selection, repeated textures outside the first tile, matching all-channel atlas scales and scalar alpha; bake fallback when all eight UV channels are occupied.
 - Redundant channel elimination using source constants and every covered bake pixel, including fractional UV coverage, HDR scalar emission and a deliberately varied final pixel. Varying normal, emission, roughness and alpha maps remain intact.
+- Actual Cycles CPU preview capture and temporary camera/light cleanup; no Workbench graphics context is required.
 
 All five installed importer modules register and expose their required operators. Generated MMD PMX, XPS ASCII, Source SMD and VRM models also passed actual importer-to-FBX checks. SMD plus matching/explicit VTA retained two morphs; VRM1 retained two morphs. Both routes verified actual FBX vertex weights and distinct Smile/Blink deformation. Unmatched VTA files produce a selection warning. Binary XPS, Source 2 and DMX have not been tested with representative supplied models.
 

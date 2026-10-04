@@ -12,7 +12,7 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "avatarforge"))
-from blender_worker import constant_socket_value, covered_uniform_pixels, run, export_and_verify
+from blender_worker import constant_socket_value, covered_uniform_pixels, run, export_and_verify, preview
 from bone_aliases import map_humanoid
 
 
@@ -102,6 +102,22 @@ def main():
     folder = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
     folder.mkdir(parents=True, exist_ok=True)
     source, expected_bones = fixture(folder)
+    scene = bpy.context.scene
+    state = (scene.render.engine, scene.cycles.device, scene.cycles.samples,
+             scene.cycles.use_denoising, scene.camera, scene.world,
+             scene.render.resolution_x, scene.render.resolution_y,
+             scene.render.resolution_percentage, scene.render.filepath,
+             scene.render.image_settings.file_format)
+    objects = set(bpy.data.objects)
+    preview_report = {"issues": []}
+    preview([bpy.data.objects["FixtureBody"]], folder, preview_report)
+    assert preview_report["preview_renderer"] == "cycles_cpu", preview_report
+    assert set(bpy.data.objects) == objects
+    assert state == (scene.render.engine, scene.cycles.device, scene.cycles.samples,
+                     scene.cycles.use_denoising, scene.camera, scene.world,
+                     scene.render.resolution_x, scene.render.resolution_y,
+                     scene.render.resolution_percentage, scene.render.filepath,
+                     scene.render.image_settings.file_format)
     report = run({"source": str(source), "output": str(folder / "fixture-preserve"), "preset": "preserve", "options": {"target_triangles": 1}})
     assert report["optimization"]["target_triangles"] is None
     assert any(item["code"] == "preserve_target_ignored" for item in report["issues"])
@@ -121,6 +137,8 @@ def main():
     assert report["materials"][0]["base_color_texture"]
     assert report["materials"][0]["base_color"] == [1.0, 1.0, 1.0, 1.0]
     assert (folder / "fixture-preserve" / "preview.png").stat().st_size > 100
+    assert report["preview_renderer"] == "cycles_cpu"
+    assert not any(obj.name.startswith("AvatarForge_Preview") for obj in bpy.data.objects)
     for preset in ("balanced", "mobile"):
         result = run({"source": str(source), "output": str(folder / ("fixture-" + preset)), "preset": preset,
                       "options": {"target_triangles": 1, "preview": False, "physics_roots": ["Breast.L"]}})
