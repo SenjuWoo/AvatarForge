@@ -38,8 +38,8 @@ All five installed importer modules register and expose their required operators
 
 | Model | Blender result |
 |---|---|
-| Shion CloudRig | 58,815 triangles; 1,297 retained bones; 308 weighted bones; 95 shape keys; 43 PNG textures. Zero lost required bones, keys or weighted influences. 12 of 13 materials automatically baked at 2K from render UVs into export UV0; 19 redundant channel maps removed. |
-| DoomGirl Source MDL | 168,218 to 69,988 triangles; 59 bones; 55 weighted bones; 24 PNG textures. Zero lost required bones or influences. The source has no shape keys or named secondary motion chains to recreate. |
+| Shion CloudRig | 58,815 triangles; 1,297 retained bones; 308 weighted bones; 95 shape keys; 43 PNG textures. Zero missing required bones, keys or weighted-bone names. 12 of 13 materials automatically baked at 2K from render UVs into export UV0; 19 redundant channel maps removed. |
+| DoomGirl Source MDL | 168,218 to 69,988 triangles; 59 bones; 55 weighted bones; 24 PNG textures. Zero missing required bones or weighted-bone names. The source has no shape keys or named secondary motion chains to recreate. |
 
 Both main source-file SHA256 values remained unchanged. Shion's generated hierarchy repair changed 320 parent links while retaining bind/rest matrices within `4.77e-7`; 47 blended-parent constraints were approximated with a single parent and remain explicit articulation/physics review items.
 
@@ -55,8 +55,8 @@ Actual Unity MCP commands also verified:
 - Safe simplification: 800 to 500 triangles, two named/nonzero shape frames, unchanged bind poses and hierarchy; original mesh remained 800.
 - Automatic PC preset: 80,000 to 70,000 triangles, valid Humanoid, 23 bones and two shape keys, with original and optimized prefabs kept separately. A custom target produced 60,000; Preserve retained 80,000 even with a reduction override in the supplied manifest.
 - Six-influence fixture: the managed reducer was not called; the original 800-triangle mesh and all six influences remained intact.
-- DoomGirl: valid Humanoid, 69,988 triangles, 59 bones and all 55 weighted-bone influences retained.
-- Shion's corrected visible outfit is already below the 70,000 triangle target at 58,815. All 1,297 bones, 95 shape keys and 308 weighted-bone influences remain. Its maximum 16 influences are preserved rather than passed through a four-influence reducer.
+- DoomGirl: valid Humanoid, 69,988 triangles, 59 bones and all 55 expected weighted bones remain weighted.
+- Shion's corrected visible outfit is already below the 70,000 triangle target at 58,815. All 1,297 bones, 95 shape keys and 308 expected weighted bones remain. The imported meshes expose up to 16 influences per vertex and bypass the four-influence reducer.
 - Shion's saved Humanoid importer pose and saved prepared prefab both passed the native Unity pose check with error zero. A `HumanPoseHandler` read/write round trip also retained the calibrated T-pose. All 95 authored shape values survived saved-prefab reload. These checks include rendered front and quarter views of the actual prepared prefab.
 - Native rendered comparisons checked scalar material colors against equivalent linear textures. Emission matched within `1.20e-7`; nonwhite base color matched within `1.87e-9`, including unchanged alpha 0.35. Both exposed and corrected the scalar color-space handoff before final validation.
 
@@ -65,6 +65,8 @@ Meshia's native jobs corrupted allocators during complex skinned-model tests, in
 Unity's imported storage API measured 18 referenced textures / 76,546,508 bytes for DoomGirl. Shion's corrected 2K shader conversion measured 49 / 235,056,920 bytes before constant-channel elimination and 36 / 179,132,600 bytes afterward, a 23.8% reduction with byte-identical retained maps. The final material refresh preserved the exact imported FBX and original mesh assets. Actual maps use compressed DXT formats, mipmaps and disabled texture Read/Write. These are distinct-texture storage estimates for the active build target, not measured VRAM or FPS.
 
 The actual prepared Shion prefab renders the corrected coat, robotic body/neck and red nails with straight horizontal arms and straight legs. Original material graphs and unmasked mesh backups survive reopening the saved Blender file. Simulated movement, eye/viseme setup and model-specific blended-parent approximations still require preview. The unsupported source eye-refraction shader remains a material review item. Large preserved rigs can exceed performance budgets even when polygon and texture counts improve.
+
+A final saved-scene capture initially showed extra flesh hands, bent legs and clipping. A controlled native comparison reproduced those faults by rendering an older diagnostic avatar scene over the final preview. Isolating the exact same saved preview removed the overlap; all prior scenes and temporary layer changes were restored. The desktop opening action loads the generated preview alone when no unsaved scene work is present.
 
 ## MCP and UI
 
@@ -76,7 +78,13 @@ The complete MCP workflow converted the generated fixture with authored Smile 0.
 
 The 25 standard-library regressions include failed Unity import recovery and stale-verdict rejection. A deliberately malformed generated shape-default manifest also ran through the actual fresh-project/Unity batch path: Unity emitted a blocked verdict and exited with code 1; AvatarForge retained the new project and exposed its specific error for repair. The browser's blocked-import view and successful generated-fixture view were inspected.
 
-The VRChat SDK build/upload flags remain false. No SDK Build & Test run, avatar upload, live VRChat dynamics test or Android/iOS build is claimed. The tool prepares and validates recorded conversion/import stages; the SDK and movement preview determine final avatar readiness.
+The final Shion prefab passed the installed Avatar SDK 3.10.5 validation with zero SDK errors and completed a native local `Build(GameObject)` into a 14,930,521-byte avatar bundle. This used imported authored blendshape normals, disabled legacy recalculation and streaming mipmaps on all 36 referenced textures. A fresh generated-model import independently checked these defaults, 23 bones, two shape keys, Smile 35/Blink 20 and a saved pose error of zero.
+
+The SDK still rates preserved Shion **VeryPoor** overall: 34 skinned renderers, 35 material slots, 1,297 bones and about 170.8 MiB of texture storage. It also reports forearm/shin child-order warnings and a pelvis/thigh angle of 169.7 degrees. These remain model-specific optimization and tracking review items.
+
+The weighted-bone checks compare expected names with bones still having positive influences after import. A source-FBX comparison of four Shion meshes measured maximum rest-position error of `5.97e-8` metres, UV error of `6.65e-8`, and shape-position error of `9.81e-6` metres (about 0.00981 mm). Unity pruned some authored microdeltas to zero; the original calculated-normal import also pruned microdeltas. Both import modes omitted the same 511 sub-0.001 point/bone influence pairs in the thigh harness, while every expected weighted-bone name remained weighted. The observed minimum bone weight was 0.001. The saved Blender file retains the authored data for precision edits. Unity documents its [minimum-weight culling behavior](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/ModelImporter-minBoneWeight.html).
+
+The normal preparation path leaves its SDK build/upload flags false until those stages are explicitly performed. The observed local SDK build above was a separate validation run. No SDK Build & Test client run, avatar upload, live VRChat dynamics test or Android/iOS build is claimed. Movement and dynamics preview determine final avatar readiness.
 
 ## Reproduce
 

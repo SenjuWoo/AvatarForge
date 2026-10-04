@@ -17,6 +17,8 @@ This is an initial working version, with real Blender and Unity validation. It a
 
 Every conversion writes into a new `outputs/<job>/` folder. Source files are read without enabling embedded Blender scripts; their main file hashes are checked before/after conversion. Background Blender uses an isolated profile. Recent jobs survive an app restart.
 
+If Unity shows overlapping avatars or extra limbs, open the generated `Preview.unity` scene by itself. **Open Unity** does this automatically when the project has no unsaved scene work; otherwise it preserves that work and reports the scene to open.
+
 Supported complex Blender shaders bake automatically on the local CPU. Proven constant channels become material scalars instead of redundant maps; varying color, alpha and surface detail remain at the chosen resolution. Advanced controls can force compatible materials to bake or choose texture extraction only. PC uses 2K bakes and mobile uses 1K; Preserve keeps source textures and uses the reviewed 2K bake size. Importer paths, humanoid overrides, outfit selection and scale can also be specified there.
 
 ## What it does
@@ -24,13 +26,14 @@ Supported complex Blender shaders bake automatically on the local CPU. Proven co
 - Imports supported native formats and pinned external importers; detects model candidates instead of executing downloaded SFM rig scripts.
 - Resolves available textures, extracts PNGs, caps texture size by preset and flattens supported UDIM sets with UV metadata.
 - Selects the mesh-linked character armature, exports bind/rest pose and reports nonportable controls, cloth and constraints.
-- Preserves weighted bones, secondary bones and shape keys. It verifies the actual exported FBX by importing it back into Blender, including retained weighted-bone influences.
+- Preserves weighted bones, secondary bones and shape keys. It verifies the actual exported FBX by importing it back into Blender, including a check that every expected weighted bone remains weighted.
 - Captures authored shape-key values before removing source drivers and restores those values on the saved Unity prefab. Supported deletion masks retain every shape frame and an unmasked mesh backup in the saved Blender file.
 - Exports `model.blend`, `model.fbx`, textures, a preview, a conversion manifest and diagnostic logs.
 - Maps common Source/Valve, Blender, MMD and conventional humanoid names, with explicit overrides for ambiguity.
 - Configures Unity Humanoid import, reconstructs materials, creates a prefab/preview scene and adds a VRChat descriptor when the SDK is present.
 - Calibrates Unity's Humanoid T-pose and independently checks the saved importer and prepared prefab pose. Missing or ambiguous mappings remain review items.
-- Keeps Unity's bone/Transform optimizations disabled so secondary bones remain addressable. Verifies bones, named blendshapes and weighted-bone influences again after Unity import.
+- Keeps Unity's bone/Transform optimizations disabled so secondary bones remain addressable. Verifies bones, named blendshapes and weighted-bone names again after Unity import.
+- Imports Blender's authored blendshape normals with legacy recalculation disabled, and enables streaming mipmaps on referenced mipmapped textures for the SDK handoff.
 - Creates selected PhysBone components on secondary roots; it does not infer source simulator tuning from a bone name.
 - Bakes supported complex shaders from the source render UV map into export UV0, and offers shape-preserving Unity optimization using established tools. See the dependency and validation documents for the exact installed/tested combinations.
 

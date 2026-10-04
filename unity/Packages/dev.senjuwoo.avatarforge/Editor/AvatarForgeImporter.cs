@@ -155,6 +155,7 @@ namespace AvatarForge.Editor
                 importer.optimizeGameObjects = false;
                 importer.isReadable = true;
                 importer.importBlendShapes = true;
+                ConfigureBlendShapeNormals(importer);
                 importer.importAnimation = false;
                 importer.materialImportMode = ModelImporterMaterialImportMode.None;
                 importer.skinWeights = ModelImporterSkinWeights.Custom;
@@ -384,7 +385,7 @@ namespace AvatarForge.Editor
                 output.skin_weight_integrity_verified = output.missing_weighted_bones.Length == 0;
                 if (!output.skin_weight_integrity_verified) AddIssue(issues, "error", "SKIN_WEIGHT_LOSS", "Weighted bones lost every influence during Unity import: " + string.Join(", ", output.missing_weighted_bones));
             }
-            if (output.max_skin_influences > 4) AddIssue(issues, "review", "SKINNING_QUALITY_REVIEW", "Mesh vertices use up to " + output.max_skin_influences + " bone influences. The asset retains them all; verify the target runtime's skinning quality and appearance before upload.");
+            if (output.max_skin_influences > 4) AddIssue(issues, "review", "SKINNING_QUALITY_REVIEW", "Mesh vertices use up to " + output.max_skin_influences + " bone influences. Verify the target runtime's skinning quality and appearance before upload.");
         }
 
         static void ApplyShapeDefaults(ConversionReport source, GameObject instance, UnityReport output, List<ConversionIssue> issues)
@@ -541,6 +542,15 @@ namespace AvatarForge.Editor
             output.material_texture_references = references.OrderBy(x => x).ToArray();
         }
 
+        static void ConfigureBlendShapeNormals(ModelImporter importer)
+        {
+            // Blender exports authored shape normals. Legacy processing can weld
+            // vertices and discard tiny shape deltas even when normals are imported.
+            importer.importBlendShapeNormals = ModelImporterNormals.Import;
+            var legacy = typeof(ModelImporter).GetProperty("legacyComputeAllNormalsFromSmoothingGroupsWhenMeshHasBlendShapes", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (legacy != null && legacy.CanWrite) legacy.SetValue(importer, false);
+        }
+
         static Texture2D LoadTexture(string relative, bool normal, string input, string destination, HashSet<string> references, List<ConversionIssue> issues, bool linear = false)
         {
             if (string.IsNullOrEmpty(relative)) return null;
@@ -550,8 +560,16 @@ namespace AvatarForge.Editor
             var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
             if (!texture) { AddIssue(issues, "review", "TEXTURE_UNSUPPORTED", "Unity could not import texture " + relative); return null; }
             var importer = (TextureImporter)AssetImporter.GetAtPath(path);
-            if (normal) { importer.textureType = TextureImporterType.NormalMap; importer.sRGBTexture = false; importer.SaveAndReimport(); }
-            else if (linear && importer.sRGBTexture) { importer.sRGBTexture = false; importer.SaveAndReimport(); }
+            bool changed = false;
+            if (normal && importer.textureType != TextureImporterType.NormalMap) { importer.textureType = TextureImporterType.NormalMap; changed = true; }
+            if ((normal || linear) && importer.sRGBTexture) { importer.sRGBTexture = false; changed = true; }
+            if (importer.mipmapEnabled && !importer.streamingMipmaps)
+            {
+                importer.streamingMipmaps = true;
+                importer.streamingMipmapsPriority = 0;
+                changed = true;
+            }
+            if (changed) importer.SaveAndReimport();
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }
 
