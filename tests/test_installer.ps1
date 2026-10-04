@@ -66,14 +66,52 @@ try {
     Assert-Throws { Expand-Checked $duplicate (Join-Path $testRoot 'duplicate-output') } 'duplicate file paths'
 
     # Real SDK/runtime predicates, including newer SDKs without the required net8 runtime.
-    function Test-Dotnet6 { param($Mode) $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'6.0.428 [fixture]'}else{'Microsoft.NETCore.App 6.0.36 [fixture]'} }
-    function Test-Dotnet7 { param($Mode) $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'7.0.410 [fixture]'}else{'Microsoft.NETCore.App 7.0.20 [fixture]'} }
-    function Test-Dotnet8 { param($Mode) $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'8.0.425 [fixture]'}else{'Microsoft.NETCore.App 8.0.31 [fixture]'} }
-    function Test-Dotnet10Only { param($Mode) $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'10.0.301 [fixture]'}else{'Microsoft.NETCore.App 10.0.9 [fixture]'} }
-    Assert-True (-not(Test-DotnetForVpm Test-Dotnet6)) '.NET6 was accepted for the net8 VPM tool.'
-    Assert-True (-not(Test-DotnetForVpm Test-Dotnet7)) '.NET7 was accepted for the net8 VPM tool.'
-    Assert-True (Test-DotnetForVpm Test-Dotnet8) '.NET8 SDK/runtime was rejected.'
-    Assert-True (-not(Test-DotnetForVpm Test-Dotnet10Only)) 'A newer SDK without the net8 runtime was accepted.'
+    # Use an explicitly enabled caller value so a test harness's environment
+    # cannot hide an absent installer guard.
+    $callerSettings=@{DOTNET_GENERATE_ASPNET_CERTIFICATE='true';DOTNET_ADD_GLOBAL_TOOLS_TO_PATH='true';DOTNET_CLI_TELEMETRY_OPTOUT='false'}
+    $previousSettings=@{}
+    foreach($name in $callerSettings.Keys){$previousSettings[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+    try{
+        foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,$callerSettings[$name],'Process')}
+        $script:guardedDotnetCalls=0
+        function Assert-DotnetCertificateGuard {
+            Assert-True ($env:DOTNET_GENERATE_ASPNET_CERTIFICATE -ceq 'false') 'SDK invocation did not receive the literal false certificate guard.'
+            Assert-True ($env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH -ceq 'false') 'SDK invocation did not suppress global tools PATH changes.'
+            Assert-True ($env:DOTNET_CLI_TELEMETRY_OPTOUT -ceq 'true') 'SDK invocation did not disable CLI telemetry.'
+            $script:guardedDotnetCalls++
+        }
+        function Assert-DotnetCallerRestored {
+            foreach($name in $callerSettings.Keys){Assert-True ([Environment]::GetEnvironmentVariable($name,'Process') -ceq $callerSettings[$name]) "SDK invocation changed the caller setting: $name"}
+        }
+        function Test-Dotnet6 { param($Mode) Assert-DotnetCertificateGuard; $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'6.0.428 [fixture]'}else{'Microsoft.NETCore.App 6.0.36 [fixture]'} }
+        function Test-Dotnet7 { param($Mode) Assert-DotnetCertificateGuard; $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'7.0.410 [fixture]'}else{'Microsoft.NETCore.App 7.0.20 [fixture]'} }
+        function Test-Dotnet8 { param($Mode) Assert-DotnetCertificateGuard; $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'8.0.425 [fixture]'}else{'Microsoft.NETCore.App 8.0.31 [fixture]'} }
+        function Test-Dotnet10Only { param($Mode) Assert-DotnetCertificateGuard; $global:LASTEXITCODE=0; if($Mode -eq '--list-sdks'){'10.0.301 [fixture]'}else{'Microsoft.NETCore.App 10.0.9 [fixture]'} }
+        Assert-True (-not(Test-DotnetForVpm Test-Dotnet6)) '.NET6 was accepted for the net8 VPM tool.'
+        Assert-True (-not(Test-DotnetForVpm Test-Dotnet7)) '.NET7 was accepted for the net8 VPM tool.'
+        Assert-True (Test-DotnetForVpm Test-Dotnet8) '.NET8 SDK/runtime was rejected.'
+        Assert-True (-not(Test-DotnetForVpm Test-Dotnet10Only)) 'A newer SDK without the net8 runtime was accepted.'
+        Assert-True ($script:guardedDotnetCalls -eq 8) 'An SDK/runtime probe bypassed the certificate guard.'
+        Assert-DotnetCallerRestored
+
+        # Verify an actual child receives the flag, and preserve its nonzero
+        # exit code as well as the caller setting on ordinary and thrown exits.
+        $captureChild=Join-Path $testRoot 'capture-certificate-child.ps1'
+        $captureOutput=Join-Path $testRoot 'captured-certificate-setting.txt'
+        [IO.File]::WriteAllText($captureChild,"param([string]`$Output)`n`$values=@([Environment]::GetEnvironmentVariable('DOTNET_GENERATE_ASPNET_CERTIFICATE','Process'),[Environment]::GetEnvironmentVariable('DOTNET_ADD_GLOBAL_TOOLS_TO_PATH','Process'),[Environment]::GetEnvironmentVariable('DOTNET_CLI_TELEMETRY_OPTOUT','Process'))`n[IO.File]::WriteAllLines(`$Output,`$values)`nexit 23`n")
+        Invoke-ScopedDotnet (Join-Path $PSHOME 'powershell.exe') @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
+        Assert-True ($LASTEXITCODE -eq 23) 'Guarded SDK invocation lost the child exit code.'
+        Assert-True (([IO.File]::ReadAllLines($captureOutput) -join ',') -ceq 'false,false,true') 'A real child did not inherit all three first-use protections.'
+        Assert-DotnetCallerRestored
+        function Test-ThrowingDotnet { Assert-DotnetCertificateGuard; throw 'CERTIFICATE_GUARD_CHILD_FAILURE' }
+        Assert-Throws { Invoke-ScopedDotnet Test-ThrowingDotnet @() } 'CERTIFICATE_GUARD_CHILD_FAILURE'
+        Assert-DotnetCallerRestored
+        foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
+        Invoke-ScopedDotnet (Join-Path $PSHOME 'powershell.exe') @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
+        foreach($name in $callerSettings.Keys){Assert-True ($null -eq [Environment]::GetEnvironmentVariable($name,'Process')) "The guard retained a setting that was originally absent: $name"}
+    }finally{
+        foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,$previousSettings[$name],'Process')}
+    }
 
     # Verify incompatible hosts route to the private SDK before any VPM installation.
     $script:hostDotnet='Test-Dotnet6'
@@ -108,7 +146,7 @@ try {
     Assert-True ($managed[0].destination -eq (Join-Path $runtimeRoot 'unity-packages\com.whinarn.unitymeshsimplifier')) 'Managed package destination differs from its Unity package name.'
     Assert-True ([IO.File]::ReadAllText((Join-Path $nativeFolder 'preserved.txt')) -eq 'existing optional reducer') 'Setup changed an existing optional reducer.'
     Assert-True ($catalog.dependencies.meshia.install_mode -eq 'manual-link-only') 'Native reducer catalog incorrectly advertises automatic installation.'
-    Write-Host 'AVATARFORGE_INSTALLER_TESTS_PASS: verified receipts, partial/stale payloads, preserved repair, unknown installs, ZIP paths, .NET6/7 fallback and managed optimization selection.'
+    Write-Host 'AVATARFORGE_INSTALLER_TESTS_PASS: verified receipts, partial/stale payloads, preserved repair, unknown installs, ZIP paths, scoped certificate guard, .NET6/7 fallback and managed optimization selection.'
 } finally {
     $resolved=[IO.Path]::GetFullPath($testRoot)
     $tempPrefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'

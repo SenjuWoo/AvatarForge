@@ -221,11 +221,25 @@ function Find-Blender {
     return $null
 }
 
+function Invoke-ScopedDotnet($Executable,[string[]]$Arguments) {
+    # SDK first use must not create certificates, append the global tools PATH,
+    # or send CLI telemetry. Restore the caller's settings after every child.
+    $settings=@{DOTNET_GENERATE_ASPNET_CERTIFICATE='false';DOTNET_ADD_GLOBAL_TOOLS_TO_PATH='false';DOTNET_CLI_TELEMETRY_OPTOUT='true'}
+    $previous=@{}
+    foreach($name in $settings.Keys){$previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+    try{
+        foreach($name in $settings.Keys){[Environment]::SetEnvironmentVariable($name,$settings[$name],'Process')}
+        & $Executable @Arguments
+    }finally{
+        foreach($name in $settings.Keys){[Environment]::SetEnvironmentVariable($name,$previous[$name],'Process')}
+    }
+}
+
 function Test-DotnetForVpm($Executable) {
     try{
-        $sdks=@(& $Executable --list-sdks 2>&1)
+        $sdks=@(Invoke-ScopedDotnet $Executable @('--list-sdks') 2>&1)
         if($LASTEXITCODE -ne 0){return $false}
-        $runtimes=@(& $Executable --list-runtimes 2>&1)
+        $runtimes=@(Invoke-ScopedDotnet $Executable @('--list-runtimes') 2>&1)
         if($LASTEXITCODE -ne 0){return $false}
         $sdkOK=@($sdks | Where-Object {$_ -match '^([0-9]+)\.' -and [int]$Matches[1] -ge 8}).Count -gt 0
         $runtimeOK=@($runtimes | Where-Object {$_ -match '^Microsoft\.NETCore\.App 8\.'}).Count -gt 0
@@ -266,7 +280,7 @@ function Install-UnityTools {
             $feed=Join-Path $stage 'feed'
             New-Item -ItemType Directory -Path $feed | Out-Null
             Copy-Item -LiteralPath $archive -Destination (Join-Path $feed ('vrchat.vpm.cli.'+$entry.version+'.nupkg'))
-            & $dotnetExe tool install --tool-path $vpmFolder vrchat.vpm.cli --version $entry.version --add-source $feed --ignore-failed-sources
+            Invoke-ScopedDotnet $dotnetExe @('tool','install','--tool-path',$vpmFolder,'vrchat.vpm.cli','--version',$entry.version,'--add-source',$feed,'--ignore-failed-sources')
             if($LASTEXITCODE -ne 0){throw 'Official VPM installation failed.'}
         }
         $store=Join-Path $vpmFolder ('.store\vrchat.vpm.cli\'+$entry.version+'\vrchat.vpm.cli\'+$entry.version+'\tools\net8.0\any')

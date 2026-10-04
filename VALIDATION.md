@@ -17,6 +17,8 @@ Validated on Windows x64 on 2026-10-03 and 2026-10-04. These results describe th
 
 Windows PowerShell 5.1 works when launched by the portable Python, including an inherited incompatible PowerShell 7 module path. Installer regressions cover altered/missing files, preserved repair backups, unknown occupied folders, archive paths and .NET 6/7 fallback selection. Managed reducer installation verified all 93 payload files and kept 1,542 existing package files unchanged across repeated setup. No user provider configuration is rewritten.
 
+A fresh extracted install exposed .NET's first-use HTTPS development-certificate announcement. The installer now sets [`DOTNET_GENERATE_ASPNET_CERTIFICATE=false`](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables#dotnet_generate_aspnet_certificate), disables automatic global-tool PATH setup and opts out of CLI telemetry for SDK child commands, restoring the caller's process settings afterward. No existing certificates are removed, and the earlier announcement alone does not establish that a new certificate was created.
+
 ## Blender checks
 
 The public regression generates its own assets and uses real Blender operations:

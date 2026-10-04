@@ -13,3 +13,4 @@
 - Saved physics-root selections, persisted Unity verdicts and texture storage estimates in the local interface.
 - Pinned local dependency setup, source-data isolation and runnable Blender/loopback regression checks.
 - CPU preview rendering without a GPU context, with temporary scene state restored after capture.
+- Installer suppresses .NET certificate/PATH first-use setup and telemetry for its child commands, restoring caller process settings afterward.
