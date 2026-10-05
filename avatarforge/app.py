@@ -54,7 +54,7 @@ class Service:
         prop = "SelectedPath" if kind == "folder" else "FileName"
         script += f"if($d.ShowDialog() -eq 'OK'){{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output $d.{prop}}}"
         flags = subprocess.CREATE_NO_WINDOW
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-STA", "-Command", script], capture_output=True, timeout=600, creationflags=flags)
+        result = run_owned(["powershell.exe", "-NoProfile", "-STA", "-Command", script], capture_output=True, timeout=600, creationflags=flags, parent_lifetime=True)
         if result.returncode:
             raise ValueError("File picker could not open. Enter the model path instead.")
         return {"path": result.stdout.decode("utf-8-sig", errors="replace").strip()}

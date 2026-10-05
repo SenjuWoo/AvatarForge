@@ -47,10 +47,15 @@ atexit.register(_stop_owned_processes)
 def run_owned(args, **kwargs):
     """Run only a new setup/import child; close it if its app/MCP session exits."""
     timeout = kwargs.pop("timeout", None)
+    parent_lifetime = kwargs.pop("parent_lifetime", False)
     process = subprocess.Popen(args, **kwargs)
+    lifetime = None
     with _owned_process_lock:
         _owned_processes.add(process)
     try:
+        if parent_lifetime:
+            from .native_child import NativeChildLifetime
+            lifetime = NativeChildLifetime(process)
         stdout, stderr = process.communicate(timeout=timeout)
         return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
     except BaseException:
@@ -59,6 +64,8 @@ def run_owned(args, **kwargs):
             process.wait()
         raise
     finally:
+        if lifetime:
+            lifetime.close()
         with _owned_process_lock:
             _owned_processes.discard(process)
 

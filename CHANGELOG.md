@@ -2,6 +2,8 @@
 
 ## 0.2.0
 
+- Native file/folder pickers now close with their app parent, including abrupt exits; they cannot leave orphaned dialogs locking a previous app folder.
+
 - Add Connect AI in the UI and a one-click BAT, ten reviewed client adapters, generic MCP export, actual stdio discovery, configuration backups and idempotent updates.
 - Ship one small usage skill separately from the app; preserve unrelated providers, model choices, trust, filters and settings.
 - Isolate native workers in their own conversion directory; make converted Blender texture paths, new job receipts and installed tool receipts survive application moves.

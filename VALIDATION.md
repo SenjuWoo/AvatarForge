@@ -2,7 +2,7 @@
 
 ## Portable app and AI registration
 
-- Standard-library suite: 33 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
+- Standard-library suite: 34 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
 - Installed Hermes configuration API: tested separately in a disposable home; unrelated model choice, unknown keys and another MCP server survived. A repeat registration made no config change. This does not certify every third-party AI client's active session.
 - Native Blender regression passed after copying an actual exported blend and its PNGs into a different Unicode folder, reopening it and reloading the images from the relocated paths.
 - Connect AI was clicked through the actual browser UI in a disposable project. Codex, Claude Code, Copilot and VS Code entries completed registration, seven local MCP tools were discovered, and browser error/warning logs were empty. The final controls were rendered and visually inspected.
@@ -22,9 +22,9 @@ Validated on Windows x64 on 2026-10-03 and 2026-10-04. These results describe th
 | Portable Python | 3.14.8, original official embedded payload |
 | Private .NET fallback | SDK 8.0.425 and runtime 8.0.31, downloaded, hashed and executed |
 | Unity Mesh Simplifier | Managed 3.1.1, complete pinned source; separate output meshes and influence-count preflight |
-| Installer | Fresh/adopted installation and repeated offline verification passed; 12 default payload receipts, plus a preserved optional package locally |
+| Installer | 0.2.0 fresh archive: 11 official payload receipts and verified external Blender; repeat setup preserved identical payloads |
 
-Windows PowerShell 5.1 works when launched by the portable Python, including an inherited incompatible PowerShell 7 module path. Installer regressions cover altered/missing files, preserved repair backups, unknown occupied folders, archive paths and .NET 6/7 fallback selection. Managed reducer installation verified all 93 payload files and kept 1,542 existing package files unchanged across repeated setup. No user provider configuration is rewritten.
+Windows PowerShell 5.1 works when launched by the portable Python, including an inherited incompatible PowerShell 7 module path. Installer regressions cover altered/missing files, preserved repair backups, unknown occupied folders, archive paths and .NET 6/7 fallback selection. Managed reducer installation verified all 93 payload files and kept 1,542 existing package files unchanged across repeated setup. Normal tool installation preserves AI provider configuration; the explicit Connect AI action merges only its owned server entry.
 
 A fresh extracted install exposed .NET's first-use HTTPS development-certificate announcement. The installer now sets [`DOTNET_GENERATE_ASPNET_CERTIFICATE=false`](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables#dotnet_generate_aspnet_certificate), disables automatic global-tool PATH setup and opts out of CLI telemetry for SDK child commands, restoring the caller's process settings afterward. No existing certificates are removed, and the earlier announcement alone does not establish that a new certificate was created.
 
@@ -110,3 +110,5 @@ blender.exe --background --factory-startup --disable-autoexec --python-exit-code
 ```
 
 Use the actual Blender executable, not a shell alias. GitHub Actions repeats installation, engine/installer checks and real Blender regressions on clean Windows runners. Unity integration requires an installed licensed editor and is verified locally rather than by an unlicensed CI simulation.
+
+A real Windows child-process test terminates the picker owner abruptly and confirms its assigned child exits while an unrelated process stays alive.
