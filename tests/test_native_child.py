@@ -50,3 +50,24 @@ class NativeChildTests(unittest.TestCase):
                 parent.communicate(timeout=10)
             control.terminate()
             control.wait(timeout=10)
+
+
+    def test_browse_uses_real_process_api_and_utf8_result(self):
+        from unittest.mock import patch
+        from avatarforge.app import Service
+        real_popen = subprocess.Popen
+        selected = 'C:/Models with spaces/模型.blend'
+        command = [sys.executable, '-c', 'import sys;sys.stdout.reconfigure(encoding="utf-8");print(' + repr(selected) + ')']
+        # Keep the real Popen argument contract, pipes, wait and native lifetime;
+        # replace only the interactive dialog with a controlled CLI child in CI.
+        def spawn(args, **kwargs):
+            self.assertEqual(args[0], 'powershell.exe')
+            return real_popen(command, **kwargs)
+        with tempfile.TemporaryDirectory(prefix='AvatarForge picker API – ') as folder:
+            service = Service(folder)
+            try:
+                with patch('avatarforge.core.subprocess.Popen', side_effect=spawn):
+                    self.assertEqual(service.browse('file'), {'path': selected})
+                    self.assertEqual(service.browse('folder'), {'path': selected})
+            finally:
+                service.jobs.close()

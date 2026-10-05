@@ -2,7 +2,7 @@
 
 ## Portable app and AI registration
 
-- Standard-library suite: 34 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
+- Standard-library suite: 35 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
 - Installed Hermes configuration API: tested separately in a disposable home; unrelated model choice, unknown keys and another MCP server survived. A repeat registration made no config change. This does not certify every third-party AI client's active session.
 - Native Blender regression passed after copying an actual exported blend and its PNGs into a different Unicode folder, reopening it and reloading the images from the relocated paths.
 - Connect AI was clicked through the actual browser UI in a disposable project. Codex, Claude Code, Copilot and VS Code entries completed registration, seven local MCP tools were discovered, and browser error/warning logs were empty. The final controls were rendered and visually inspected.
