@@ -4,6 +4,33 @@ const token = new URLSearchParams(location.hash.slice(1)).get("token") || sessio
 if(token) sessionStorage.setItem("avatarforge-token", token);
 history.replaceState(null, "", "/");
 let preset = "preserve", activeJob = null, polling = false, starting = false, preparingUnity = false, previewUrl = null;
+let aiConfig = "";
+async function loadAiClients() {
+  const project=$("ai-project").value.trim(), data=await api("ai_clients",project?{project}:{});
+  aiConfig=JSON.stringify({mcpServers:{avatarforge:data.connection}},null,2);
+  $("ai-config").textContent=aiConfig;
+  $("ai-clients").replaceChildren();
+  for(const client of data.clients) {
+    const row=document.createElement("label"), box=document.createElement("input"), text=document.createElement("span");
+    row.className="ai-client"; box.type="checkbox"; box.value=client.id; box.checked=client.detected && !!client.config; box.disabled=!client.config;
+    text.textContent=client.name+(client.detected?" · detected":"")+(!client.config?" · user scope only":""); row.append(box,text); $("ai-clients").append(row);
+  }
+}
+$("ai-toggle").onclick=()=>guarded(async()=> { $("ai-panel").classList.toggle("hidden"); if(!$("ai-panel").classList.contains("hidden")) await loadAiClients(); });
+$("ai-project").onchange=()=>guarded(loadAiClients);
+$("ai-copy").onclick=()=>guarded(async()=> { await navigator.clipboard.writeText(aiConfig); $("ai-status").textContent="MCP configuration copied."; });
+$("ai-connect").onclick=()=>guarded(async()=> {
+  const clients=Array.from($("ai-clients").querySelectorAll("input:checked")).map(box=>box.value);
+  if(!clients.length) { $("ai-status").textContent="Choose a client, or copy the generic MCP configuration below."; return; }
+  const project=$("ai-project").value.trim(); $("ai-connect").disabled=true; $("ai-status").textContent="Checking local tools and registering clients…";
+  try {
+    let action=await api("connect_ai",{clients,...(project?{project}:{})});
+    while(action.state==="running") { await new Promise(resolve=>setTimeout(resolve,1000)); action=await api("action",{id:action.id}); }
+    if(action.state!=="complete") throw new Error(action.error || "AI registration stopped.");
+    const result=action.result;
+    $("ai-status").textContent=result.clients.map(item=>item.client+": "+(item.state==="registered"?"registered; restart or reload the client":item.error)).join("\n")+"\nLocal MCP verified: "+result.handshake.tool_count+" tools.";
+  } finally { $("ai-connect").disabled=false; }
+});
 async function refreshHistory(restore=false) {
   const jobs=await api("jobs"), select=$("history"); select.replaceChildren();
   if(!jobs.length) { const option=document.createElement("option"); option.value=""; option.textContent="No conversions yet"; select.append(option); return; }

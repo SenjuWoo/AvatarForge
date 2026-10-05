@@ -1627,7 +1627,16 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
          use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
          path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
          apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS", use_custom_props=True)
-    bpy.ops.wm.save_as_mainfile(filepath=str(output / "model.blend"), check_existing=False)
+    # Saved conversions must survive moving the app or copying the output folder.
+    # FBX has already resolved the absolute PNGs above. The blend stores only
+    # images inside this conversion relative to its own directory.
+    for image in bpy.data.images:
+        if not image.filepath or image.packed_file:
+            continue
+        path = Path(bpy.path.abspath(image.filepath)).resolve()
+        if path.is_relative_to(output):
+            image.filepath = "//" + path.relative_to(output).as_posix()
+    bpy.ops.wm.save_as_mainfile(filepath=str(output / "model.blend"), check_existing=False, relative_remap=False)
     # Read actual FBX bytes back: in-memory counts alone are not export proof.
     detach_source_logging_handlers()
     # Source Tools' unregister tests a different callback than it registered;

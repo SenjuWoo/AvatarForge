@@ -1,5 +1,14 @@
 # Observed validation
 
+## Portable app and AI registration
+
+- Standard-library suite: 33 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
+- Installed Hermes configuration API: tested separately in a disposable home; unrelated model choice, unknown keys and another MCP server survived. A repeat registration made no config change. This does not certify every third-party AI client's active session.
+- Native Blender regression passed after copying an actual exported blend and its PNGs into a different Unicode folder, reopening it and reloading the images from the relocated paths.
+- Connect AI was clicked through the actual browser UI in a disposable project. Codex, Claude Code, Copilot and VS Code entries completed registration, seven local MCP tools were discovered, and browser error/warning logs were empty. The final controls were rendered and visually inspected.
+
+Earlier model/editor evidence below remains separately scoped; a successful model build is not a claim that every input becomes a perfect avatar.
+
 Validated on Windows x64 on 2026-10-03 and 2026-10-04. These results describe the tested inputs and checks, not every possible avatar or a completed VRChat upload. Private model files, project copies and logs are excluded from Git and distribution archives.
 
 ## Runtime and installation

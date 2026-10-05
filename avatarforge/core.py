@@ -230,8 +230,18 @@ class Jobs:
                 pending = folder / "job.json"
                 try:
                     job = read_json(receipt if receipt.exists() else pending)
-                    if job.get("id") != folder.name or Path(job.get("output", "")).resolve() != folder.resolve():
+                    if job.get("id") != folder.name:
                         continue
+                    if Path(job.get("output", "")).resolve() != folder.resolve():
+                        if job.get("output_relative") != folder.name:
+                            continue
+                        job["output"] = str(folder.resolve())
+                    previous_root = job.get("app_root")
+                    if previous_root and previous_root != str(ROOT):
+                        job["addon_paths"] = [str(ROOT / Path(p).relative_to(previous_root))
+                                              if Path(p).is_relative_to(previous_root) else p
+                                              for p in job.get("addon_paths", [])]
+                        job["app_root"] = str(ROOT)
                     if job.get("state") in {"queued", "converting"}:
                         job.update(state="interrupted", error="The previous app session ended. Diagnostic output was kept; start a new conversion to retry.")
                     self.jobs[job["id"]] = job
@@ -266,7 +276,8 @@ class Jobs:
         if output.is_relative_to(source.parent) and source.parent == self.output_root:
             raise ValueError("Use a separate output folder.")
         output.mkdir(parents=True, exist_ok=False)
-        job = {"id": job_id, "source": str(source), "output": str(output), "preset": preset, "options": options,
+        job = {"id": job_id, "source": str(source), "output": str(output), "output_relative": job_id,
+               "app_root": str(ROOT), "preset": preset, "options": options,
                "addon_paths": [str(ROOT / ".runtime" / "addons")] + [str(Path(p).expanduser().resolve()) for p in extra_addons], "state": "queued", "started": time.time(), "log": "", "blender": executable}
         write_json(output / "job.json", job)
         with self.lock:
@@ -291,7 +302,7 @@ class Jobs:
                 isolated.mkdir(parents=True, exist_ok=True)
                 environment[name] = str(isolated)
             with (output / "blender.log").open("w", encoding="utf-8") as log:
-                process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, creationflags=flags, env=environment)
+                process = subprocess.Popen(args, cwd=output, stdout=log, stderr=subprocess.STDOUT, creationflags=flags, env=environment)
                 self._update(job_id, pid=process.pid)
                 while process.poll() is None:
                     time.sleep(0.5)

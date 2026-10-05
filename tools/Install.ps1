@@ -132,7 +132,11 @@ function Test-Receipt($Receipt,$Id,$Destination,$Entry) {
     if(-not $Receipt -or $Receipt.schema_version -ne 2 -or $Receipt.id -ne $Id -or $Receipt.version -ne $Entry.version){return $false}
     $digest=Get-ArchiveDigest $Entry
     if($Receipt.archive_algorithm -ne $digest.algorithm -or $Receipt.archive_digest -ne $digest.value){return $false}
-    if([IO.Path]::GetFullPath($Receipt.destination) -ne [IO.Path]::GetFullPath($Destination)){return $false}
+    try{$destinationFull=Assert-OwnedPath $Destination $runtimeRoot}catch{return $false}
+    if([IO.Path]::GetFullPath($Receipt.destination) -ne $destinationFull){
+        $relative=$destinationFull.Substring([IO.Path]::GetFullPath($runtimeRoot).TrimEnd('\').Length+1).Replace('\','/')
+        if(-not $Receipt.destination_relative -or $Receipt.destination_relative -ne $relative){return $false}
+    }
     return Test-Payload $Destination $Receipt.files
 }
 
@@ -142,6 +146,7 @@ function Write-Receipt($Id,$Entry,$Destination,$Marker,$Manifest,$Adopted,$Verif
     $receipt=[ordered]@{
         schema_version=2;id=$Id;version=$Entry.version;license=$Entry.license
         destination=[IO.Path]::GetFullPath($Destination);marker=$Marker
+        destination_relative=([IO.Path]::GetFullPath($Destination).Substring([IO.Path]::GetFullPath($runtimeRoot).TrimEnd('\').Length+1).Replace('\','/'))
         archive_algorithm=$digest.algorithm;archive_digest=$digest.value;download_url=$Entry.download_url
         verification=$Verification;verified_at=(Get-Date).ToUniversalTime().ToString('o')
         adopted=[bool]$Adopted;files=@($Manifest)
@@ -157,7 +162,10 @@ function Install-Portable($Id,$Destination,$Marker) {
     if(-not $entry){throw "Unknown dependency: $Id"}
     $destinationFull=Assert-OwnedPath $Destination $runtimeRoot
     $receipt=Get-Receipt $Id
-    if(Test-Receipt $receipt $Id $destinationFull $entry){Write-Host "$Id verified locally ($($receipt.version)).";return}
+    if(Test-Receipt $receipt $Id $destinationFull $entry){
+        if([IO.Path]::GetFullPath($receipt.destination) -ne $destinationFull){Write-Receipt $Id $entry $destinationFull $Marker $receipt.files $receipt.adopted $receipt.verification}
+        Write-Host "$Id verified locally ($($receipt.version)).";return
+    }
     $archive=Get-PinnedArchive $entry
     $stage=Join-Path $cacheRoot ('stage-'+[Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
@@ -301,8 +309,10 @@ function Write-InstallState($Status,$Failure) {
         $receipt=Get-Receipt $id
         $entry=$catalog.dependencies.$id
         if(-not $entry -or -not $receipt){continue}
-        if(Test-Receipt $receipt $id $receipt.destination $entry){
-            $verified[$id]=[ordered]@{version=$receipt.version;destination=$receipt.destination;verification=$receipt.verification;archive_algorithm=$receipt.archive_algorithm;archive_digest=$receipt.archive_digest;receipt=$file.FullName}
+        $destination=$receipt.destination
+        if($receipt.destination_relative){$destination=Join-Path $runtimeRoot $receipt.destination_relative}
+        if(Test-Receipt $receipt $id $destination $entry){
+            $verified[$id]=[ordered]@{version=$receipt.version;destination=$destination;verification=$receipt.verification;archive_algorithm=$receipt.archive_algorithm;archive_digest=$receipt.archive_digest;receipt=$file.FullName}
         }
     }
     $state=[ordered]@{schema_version=2;checked_at=(Get-Date).ToUniversalTime().ToString('o');component=$Component;status=$Status;installed=$verified;external_tools=@($script:externalTools)}

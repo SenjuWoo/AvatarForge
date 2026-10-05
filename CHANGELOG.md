@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Add Connect AI in the UI and a one-click BAT, ten reviewed client adapters, generic MCP export, actual stdio discovery, configuration backups and idempotent updates.
+- Ship one small usage skill separately from the app; preserve unrelated providers, model choices, trust, filters and settings.
+- Isolate native workers in their own conversion directory; make converted Blender texture paths, new job receipts and installed tool receipts survive application moves.
+- Test provider registration in clean Unicode homes, malformed/conflicting/locked configuration, repeat registration, moved conversions and moved installed tools.
+
 ## 0.1.0
 
 - Initial local UI, deterministic conversion engine, CLI and compact optional MCP interface.

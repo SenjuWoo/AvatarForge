@@ -6,6 +6,7 @@ blender --background --factory-startup --disable-autoexec --python-exit-code 1
 from pathlib import Path
 import importlib.util
 import json
+import shutil
 import sys
 
 import bpy
@@ -139,6 +140,16 @@ def main():
     assert (folder / "fixture-preserve" / "preview.png").stat().st_size > 100
     assert report["preview_renderer"] == "cycles_cpu"
     assert not any(obj.name.startswith("AvatarForge_Preview") for obj in bpy.data.objects)
+    relocated = folder / "portable output – 移动"
+    shutil.copytree(folder / "fixture-preserve", relocated)
+    bpy.ops.wm.open_mainfile(filepath=str(relocated / "model.blend"), use_scripts=False)
+    portable_images = [image for image in bpy.data.images if image.filepath.replace("\\", "/").startswith("//textures/") and not image.packed_file]
+    assert portable_images, "Exported blend must store portable texture paths"
+    for image in portable_images:
+        path = Path(bpy.path.abspath(image.filepath)).resolve()
+        assert path.is_relative_to(relocated.resolve()) and path.is_file(), (image.name, image.filepath)
+        image.reload()
+        assert image.size[0] > 0 and image.pixels[:4]
     for preset in ("balanced", "mobile"):
         result = run({"source": str(source), "output": str(folder / ("fixture-" + preset)), "preset": preset,
                       "options": {"target_triangles": 1, "preview": False, "physics_roots": ["Breast.L"]}})

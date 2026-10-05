@@ -2,11 +2,17 @@
 
 Local model-to-avatar workbench: choose a model, convert through Blender, then prepare a Unity/VRChat project. Normal conversions use **no AI, account or API credits**.
 
-**[Download the source ZIP](https://github.com/SenjuWoo/AvatarForge/archive/refs/heads/main.zip)** → extract it → double-click **INSTALL-TOOLS.bat**. It installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
+**[Download the release](https://github.com/SenjuWoo/AvatarForge/releases/latest)** → extract the AvatarForge ZIP into your apps folder → double-click **INSTALL-TOOLS.bat**. It installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
 
-This is an initial working version, with real Blender and Unity validation. It automates the repeatable work; the reports identify model-specific repair and preview work. It does not claim every arbitrary model becomes a finished avatar.
+Keep the application in its own folder, outside AI skill directories. **Connect AI** in the interface, or **CONNECT-AI.bat**, registers the optional local tools. Skill folders receive only the small AvatarForge usage skill.
+
+It automates the repeatable work, with real Blender and Unity validation. Reports identify model-specific repair and preview work. An arbitrary model may still need rigging or artistic repair.
 
 ![AvatarForge local interface with a generated test model](docs/ui-preview.jpg)
+
+![AvatarForge Connect AI panel with client selection and optional project scope](docs/ai-connect.jpg)
+
+Connect AI checks the local server and preserves your existing client settings. Client activation is verified after its restart or reload.
 
 ## The normal workflow
 
@@ -80,7 +86,11 @@ This distribution is the complete checkout/ZIP, not a standalone Python wheel. W
 
 AvatarForge works independently. It pairs with [Ultimate-AI-Starter-Bundle](https://github.com/SenjuWoo/Ultimate-AI-Starter-Bundle) when you want an AI to inspect a report, select meshes, supply a bone map or repair a difficult source in Blender/Unity. No bundle fork or extra always-on engine server is required.
 
-The small built-in MCP server exposes seven tools: doctor, scan, convert, job, cancel, prepare Unity and action status. Job/status replies are compact by default; request `details=true` only for a full manifest. Point your client's project-scoped MCP entry at the portable Python and `run.py mcp`:
+Click **Connect AI**, choose your installed clients and connect. Configuration changes are backed up, merge only AvatarForge's server, and preserve other servers, model choices, tool filters and trust. Reload the client afterward. For project-only access, enter that project folder; unsupported project scopes are reported without changing global settings.
+
+Reviewed Windows adapters cover Codex, Claude Code/Desktop, Cursor, Gemini CLI, GitHub Copilot, VS Code, Windsurf/Devin, OpenCode and Hermes. Hermes uses its installed configuration API and requires the app/gateway to be closed. Unknown clients can use the generated generic stdio entry. A web-only chat needs a compatible local bridge; changing the AI model does not require re-registering AvatarForge.
+
+The small built-in MCP server exposes seven tools: doctor, scan, convert, job, cancel, prepare Unity and action status. Job/status replies are compact by default; request `details=true` only for a full manifest. The generic entry is:
 
 ```json
 {
@@ -94,6 +104,8 @@ The small built-in MCP server exposes seven tools: doctor, scan, convert, job, c
 ```
 
 Use the client's native configuration format for that entry. For live repair, enable only the bundle's `engine-blender` / `engine-unity` profiles for the relevant project. Their addons/editors must actually be running; installing a server alone is not an editor connection.
+
+Provider format references and configuration/backup behavior: [AI integration](docs/ai-integration.md). Moving the app requires running **Connect AI** again; the owned server paths are updated. Converted blend files use relative texture paths, and new job and tool receipts survive moving the application.
 
 ## CLI and checks
 

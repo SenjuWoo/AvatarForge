@@ -3,6 +3,9 @@
 outputs/
 validation/
 .validation/
+.development/
+Saved-Models/
+UnityProjects/
 dist/
 __pycache__/
 *.pyc

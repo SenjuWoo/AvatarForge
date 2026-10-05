@@ -60,6 +60,12 @@ class Service:
         return {"path": result.stdout.decode("utf-8-sig", errors="replace").strip()}
 
     def invoke(self, method, args):
+        if method == "ai_clients":
+            from .integrations import clients
+            return clients(project=args.get("project"))
+        if method == "connect_ai":
+            from .integrations import register
+            return self.action("Connect AI", lambda: register(args.get("clients", "auto"), project=args.get("project")))
         if method == "doctor":
             return doctor()
         if method == "scan":
@@ -308,7 +314,7 @@ def mcp_stdio(output=None):
 
 def main():
     parser = argparse.ArgumentParser(description="AvatarForge: local model-to-avatar conversion")
-    parser.add_argument("command", nargs="?", default="ui", choices=["ui", "doctor", "scan", "convert", "mcp", "unity"])
+    parser.add_argument("command", nargs="?", default="ui", choices=["ui", "doctor", "scan", "convert", "mcp", "unity", "connect"])
     parser.add_argument("source", nargs="?")
     parser.add_argument("--preset", choices=list(PRESETS), default="preserve")
     parser.add_argument("--options", help="Path to JSON options (humanoid mapping, selected meshes, height)")
@@ -316,6 +322,8 @@ def main():
     parser.add_argument("--blender", help="Explicit Blender executable")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--providers", nargs="+", default=["auto"], help="AI clients to register, or auto for detected clients")
+    parser.add_argument("--project", help="Register only for this project when the client supports project scope")
     args = parser.parse_args()
     try:
         if args.command == "ui":
@@ -324,6 +332,12 @@ def main():
             mcp_stdio(args.output)
         elif args.command == "doctor":
             print(json.dumps(doctor(), indent=2))
+        elif args.command == "connect":
+            from .integrations import register
+            result = register("auto" if args.providers == ["auto"] else args.providers, project=args.project)
+            print(json.dumps(result, indent=2))
+            if result["status"] == "needs_attention":
+                sys.exit(1)
         elif not args.source:
             parser.error("This command requires a model/folder path.")
         elif args.command == "scan":

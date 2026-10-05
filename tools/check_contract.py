@@ -17,7 +17,7 @@ for name, entry in catalog["dependencies"].items():
         assert entry["download_url"].startswith("https://"), name
         assert re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", "")) or re.fullmatch(r"[0-9a-f]{128}", entry.get("sha512", "")), name
 assert catalog["dependencies"]["vrchat_base"]["version"] == catalog["dependencies"]["vrchat_sdk"]["version"]
-for required in ("START-HERE.bat", "INSTALL-TOOLS.bat", "run.py", "web/index.html", "web/app.js", "web/style.css", "tools/Install.ps1", "LICENSE", "README.md"):
+for required in ("START-HERE.bat", "INSTALL-TOOLS.bat", "CONNECT-AI.bat", "skills/avatarforge/SKILL.md", "run.py", "web/index.html", "web/app.js", "web/style.css", "tools/Install.ps1", "LICENSE", "README.md"):
     assert (ROOT / required).is_file(), required
 assert (ROOT / "unity/Packages/dev.senjuwoo.avatarforge/LICENSE.md").read_bytes() == (ROOT / "LICENSE").read_bytes(), "Standalone Unity package must retain the same MIT notice"
 if (ROOT / ".git").exists():

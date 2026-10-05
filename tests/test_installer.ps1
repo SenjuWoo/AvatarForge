@@ -36,6 +36,18 @@ try {
     Assert-True ($receipt.schema_version -eq 2 -and $receipt.files.Count -eq 2) 'Receipt did not account for all payload files.'
     Install-Portable fixture $destination marker.txt
 
+    # A byte-verified portable install can move without downloading again.
+    $movedRuntime=Join-Path $testRoot 'Moved runtime with spaces'
+    Move-Item -LiteralPath $runtimeRoot -Destination $movedRuntime
+    $runtimeRoot=$movedRuntime
+    $cacheRoot=Join-Path $runtimeRoot 'downloads'
+    $receiptRoot=Join-Path $runtimeRoot 'receipts'
+    $destination=Join-Path $runtimeRoot 'fixture'
+    Assert-True (Test-Receipt $receipt fixture $destination $entry) 'Moved payload did not validate by relative destination.'
+    Install-Portable fixture $destination marker.txt
+    $receipt=Get-Receipt fixture
+    Assert-True ($receipt.destination -eq [IO.Path]::GetFullPath($destination)) 'Moved receipt was not refreshed.'
+
     # A marker alone must never classify a partial or modified installation as ready.
     [IO.File]::WriteAllText((Join-Path $destination 'license.txt'),'modified user bytes')
     Assert-True (-not(Test-Receipt $receipt fixture $destination $entry)) 'Modified payload was accepted.'
