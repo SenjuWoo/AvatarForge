@@ -41,7 +41,7 @@ Supported complex Blender shaders bake automatically on the local CPU. Proven co
 - Preserves weighted bones, secondary bones and shape keys. Empty FBX skin binding records are removed without deleting bones or changing weighted matrices. It verifies the actual exported FBX by importing it back into Blender, including selected mesh vertex/triangle counts and a check that every expected weighted bone remains weighted.
 - Captures authored shape-key values before removing source drivers and restores those values on the saved Unity prefab. Supported deletion masks retain every shape frame and an unmasked mesh backup in the saved Blender file.
 - Exports `model.blend`, `model.fbx`, textures, a preview, a conversion manifest and diagnostic logs.
-- Maps common Source/Valve, Blender, MMD and conventional humanoid names, with explicit overrides for ambiguity.
+- Maps common Source/Valve, Blender, MMD and conventional humanoid names, with explicit overrides for ambiguity. When extra spine bones leave the neck or a shoulder off the mapped chest, those three bones are parented directly to UpperChest, or to Chest when UpperChest is absent, without moving their bind pose.
 - Configures compatible Unity Humanoid import or retains a Generic preview for other rigs, reconstructs materials, creates a prefab/preview scene and adds a VRChat descriptor when the SDK is present.
 - Calibrates Unity's Humanoid T-pose and independently checks the saved importer and prepared prefab pose. Missing or ambiguous mappings remain review items.
 - Keeps Unity's bone/Transform optimizations disabled so secondary bones remain addressable. Verifies bones, named blendshapes and weighted-bone names again after Unity import.

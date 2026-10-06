@@ -616,6 +616,58 @@ def repair_generated_hierarchy(rig, weighted, relationships, options, report):
         bpy.ops.object.mode_set(mode="OBJECT")
 
 
+def align_vrchat_spine(rig, options, report):
+    """VRChat rejects a Humanoid unless the neck and both shoulders are direct children of one torso bone.
+
+    The installed SDK uses UpperChest when that bone is mapped, otherwise Chest. An ancestor
+    with extra spine segments between them still fails the upload check.
+    """
+    if not rig:
+        return
+    names = [bone.name for bone in rig.data.bones]
+    preferred = set(report.get("weighted_bones", [])) | {bone.name for bone in rig.data.bones if bone.use_deform}
+    mapped, _, _ = map_humanoid(names, options.get("humanoid_overrides", options.get("humanoid")), preferred)
+    by_human = {item["humanName"]: item["boneName"] for item in mapped}
+    torso_slot = next((name for name in ("UpperChest", "Chest") if name in by_human), None)
+    slots = [name for name in ("Neck", "LeftShoulder", "RightShoulder") if name in by_human]
+    if not torso_slot or len(slots) < 3:
+        return
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.hide_set(False)
+    rig.hide_viewport = False
+    rig.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    bones = rig.data.edit_bones
+    snapshots = {bone.name: (bone.matrix.copy(), bone.length) for bone in bones}
+    torso = bones[by_human[torso_slot]]
+    changes = []
+    try:
+        for human in slots:
+            bone = bones[by_human[human]]
+            if bone.parent == torso:
+                continue
+            if bone == torso or bone in torso.parent_recursive:
+                issue(report, "warning", "vrchat_spine_hierarchy", human + " cannot move onto " + torso.name + " without a cycle. VRChat requires the neck and both shoulders to be direct children of " + torso_slot + ".")
+                continue
+            old = bone.parent.name if bone.parent else None
+            bone.use_connect = False
+            bone.parent = torso
+            matrix, length = snapshots[bone.name]
+            bone.matrix, bone.length = matrix, length
+            changes.append({"bone": bone.name, "human": human, "old_parent": old, "parent": torso.name})
+        delta = max((abs(bone.matrix[row][column] - snapshots[bone.name][0][row][column])
+                     for bone in bones for row in range(4) for column in range(4)), default=0)
+        if delta > 1e-5:
+            raise CapabilityError("VRChat spine parent repair changed bind/rest matrices.")
+        if changes:
+            report["vrchat_spine_repair"] = {"torso_slot": torso_slot, "torso": torso.name, "changes": changes, "rest_matrix_max_delta": delta}
+            moved = ", ".join(item["human"] + " from " + str(item["old_parent"]) for item in changes)
+            issue(report, "warning", "vrchat_spine_parent_repaired", "Parented " + moved + " directly to " + torso_slot + " (" + torso.name + ") so the VRChat spine check can pass. Bind positions were kept, and intermediate spine bones remain for secondary deformation.")
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+
 def prepare_rig(rig, meshes, options, report):
     if not rig:
         return [], [], set()
@@ -668,6 +720,7 @@ def prepare_rig(rig, meshes, options, report):
         issue(report, "warning", "control_rig_rest_export", "Generated/control rig exported in bind/rest pose. Blender constraints and scripted controls do not run in Unity; inspect Humanoid mapping and secondary deformation.")
     report["weighted_bones"] = sorted(weighted)
     report["intentionally_excluded_controller_bones"] = sorted(excluded)
+    align_vrchat_spine(rig, options, report)
     return source_names, sorted(excluded), weighted
 
 
@@ -689,6 +742,14 @@ def bones_report(rig, options, report):
         for human, parent in parents.items():
             if human in by_human and parent in by_human and by_human[parent] not in by_human[human].parent_recursive:
                 issue(report, "warning", "humanoid_hierarchy", human + " is not below " + parent + "; verify the armature's Humanoid mapping in Unity.")
+        # VRCSdkControlPanelAvatarBuilder.AnalyzeIK requires a direct parent, not an ancestor.
+        torso = by_human.get("UpperChest") or by_human.get("Chest")
+        if torso:
+            for human in ("Neck", "LeftShoulder", "RightShoulder"):
+                bone = by_human.get(human)
+                if bone and bone.parent != torso:
+                    parent_name = bone.parent.name if bone.parent else "none"
+                    issue(report, "warning", "vrchat_spine_hierarchy", human + " parent is " + parent_name + ", but VRChat requires " + torso.name + " to be the direct parent of the neck and both shoulders.")
         scale = sum(abs(v) for v in rig.matrix_world.to_scale()) / 3 * bpy.context.scene.unit_settings.scale_length
         requested_roots = options.get("physics_roots")
         if requested_roots is not None and (not isinstance(requested_roots, list) or any(name not in rig.data.bones for name in requested_roots)):

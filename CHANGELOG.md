@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Parent the neck and both shoulders directly to the mapped UpperChest, or to Chest when UpperChest is absent, so VRChat's spine hierarchy check can pass. Bind positions stay put. Intermediate spine bones and secondary chains stay in the skeleton.
+- Report that repair, and warn when a cycle still leaves the neck or a shoulder off that direct parent.
+
 ## 0.2.1
 
 - Use Unity-compatible FBX unit metadata and object scales to avoid native import loops on large generated rigs.

@@ -681,8 +681,104 @@ def main():
     exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
     assert exported.data.bones[game_names["Hips"]] in exported.data.bones[game_names["LeftFoot"]].parent_recursive
     assert exported.data.bones[game_names["Chest"]] in exported.data.bones[game_names["RightHand"]].parent_recursive
+    assert "vrchat_spine_repair" not in game
     for bone in exported.data.bones:
         assert max(abs(bone.head_local[index] - heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
+    # VRChat's upload check requires the neck and both shoulders to be direct
+    # children of UpperChest. Extra GAME spine segments must not leave the neck
+    # one ancestor lower, and the breast chain on those segments must stay put.
+    source, _ = fixture(folder)
+    rig, body = bpy.data.objects["FixtureRig"], bpy.data.objects["FixtureBody"]
+    rename = {"Hips": "GAME_C1_HIP1", "Spine": "GAME_C1_SPINE1", "Chest": "GAME_C1_SPINE2",
+              "Neck": "GAME_C1_NECK1", "Head": "GAME_C1_HEAD1"}
+    for side in ("Left", "Right"):
+        for human, joint in (("Shoulder", "clav1"), ("UpperArm", "arm1"), ("LowerArm", "arm2"),
+                             ("Hand", "arm3"), ("UpperLeg", "leg1"), ("LowerLeg", "leg2"), ("Foot", "leg3")):
+            rename[side + human] = "GAME_" + side[0] + "1_" + joint
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    for original, name in rename.items():
+        rig.data.edit_bones[original].name = name
+    spine3 = rig.data.edit_bones.new("GAME_C1_SPINE3")
+    spine3.head, spine3.tail = (0, 0, 1.42), (0, 0, 1.5)
+    spine3.parent = rig.data.edit_bones["GAME_C1_SPINE2"]
+    spine4 = rig.data.edit_bones.new("GAME_C1_SPINE4")
+    spine4.head, spine4.tail = (0, 0, 1.5), (0, 0, 1.58)
+    spine4.parent = spine3
+    spine5 = rig.data.edit_bones.new("GAME_C1_SPINE5")
+    spine5.head, spine5.tail = (0, 0, 1.58), (0, 0, 1.66)
+    spine5.parent = spine4
+    rig.data.edit_bones["GAME_C1_NECK1"].parent = spine5
+    rig.data.edit_bones["Breast.L"].parent = spine5
+    for side in ("L", "R"):
+        rig.data.edit_bones["GAME_" + side + "1_clav1"].parent = spine4
+    spine_heads = {bone.name: tuple(bone.head) for bone in rig.data.edit_bones}
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for original, name in rename.items():
+        group = body.vertex_groups.get(original)
+        if group:
+            group.name = name
+        else:
+            body.vertex_groups.new(name=name).add([0], .01, "ADD")
+    body.vertex_groups.new(name="GAME_C1_SPINE3").add([0], .01, "ADD")
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    extra_spine = run({"source": str(source), "output": str(folder / "fixture-extra-spine"),
+                       "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert extra_spine["status"] != "blocked", extra_spine["issues"]
+    assert not any(item["code"] == "vrchat_spine_hierarchy" for item in extra_spine["issues"]), extra_spine["issues"]
+    repair = extra_spine["vrchat_spine_repair"]
+    assert repair["torso"] == "GAME_C1_SPINE3" and repair["changes"] == [
+        {"bone": "GAME_C1_NECK1", "human": "Neck", "old_parent": "GAME_C1_SPINE5", "parent": "GAME_C1_SPINE3"},
+        {"bone": "GAME_L1_clav1", "human": "LeftShoulder", "old_parent": "GAME_C1_SPINE4", "parent": "GAME_C1_SPINE3"},
+        {"bone": "GAME_R1_clav1", "human": "RightShoulder", "old_parent": "GAME_C1_SPINE4", "parent": "GAME_C1_SPINE3"}]
+    mapping = {item["humanName"]: item["boneName"] for item in extra_spine["humanoid"]}
+    assert mapping["UpperChest"] == "GAME_C1_SPINE3" and mapping["Chest"] == "GAME_C1_SPINE2"
+    assert mapping["Neck"] == "GAME_C1_NECK1" and mapping["LeftShoulder"] == "GAME_L1_clav1"
+    exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
+    assert exported.data.bones["GAME_C1_NECK1"].parent.name == "GAME_C1_SPINE3"
+    assert exported.data.bones["GAME_L1_clav1"].parent.name == "GAME_C1_SPINE3"
+    assert exported.data.bones["GAME_R1_clav1"].parent.name == "GAME_C1_SPINE3"
+    assert exported.data.bones["GAME_L1_arm1"].parent.name == "GAME_L1_clav1"
+    assert exported.data.bones["GAME_R1_arm1"].parent.name == "GAME_R1_clav1"
+    assert exported.data.bones["GAME_C1_HEAD1"].parent.name == "GAME_C1_NECK1"
+    assert exported.data.bones["Breast.L"].parent.name == "GAME_C1_SPINE5"
+    assert exported.data.bones["GAME_C1_SPINE5"].parent.name == "GAME_C1_SPINE4"
+    for bone in exported.data.bones:
+        assert max(abs(bone.head_local[index] - spine_heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
+    # The same direct-parent rule applies when the torso bone is Chest because
+    # no UpperChest alias exists. The unrelated segment stays in the skeleton.
+    source, _ = fixture(folder)
+    rig = bpy.data.objects["FixtureRig"]
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    rib = rig.data.edit_bones.new("Rib")
+    rib.head, rib.tail = (0, 0, 1.42), (0, 0, 1.48)
+    rib.parent = rig.data.edit_bones["Chest"]
+    rig.data.edit_bones["Neck"].parent = rib
+    rig.data.edit_bones["LeftShoulder"].parent = rib
+    rig.data.edit_bones["RightShoulder"].parent = rib
+    rib_heads = {bone.name: tuple(bone.head) for bone in rig.data.edit_bones}
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    chest_parent = run({"source": str(source), "output": str(folder / "fixture-chest-neck-gap"),
+                        "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert chest_parent["status"] != "blocked", chest_parent["issues"]
+    assert not any(item["code"] == "vrchat_spine_hierarchy" for item in chest_parent["issues"]), chest_parent["issues"]
+    assert chest_parent["vrchat_spine_repair"]["torso"] == "Chest"
+    assert chest_parent["vrchat_spine_repair"]["changes"] == [
+        {"bone": "Neck", "human": "Neck", "old_parent": "Rib", "parent": "Chest"},
+        {"bone": "LeftShoulder", "human": "LeftShoulder", "old_parent": "Rib", "parent": "Chest"},
+        {"bone": "RightShoulder", "human": "RightShoulder", "old_parent": "Rib", "parent": "Chest"}]
+    assert "UpperChest" not in {item["humanName"] for item in chest_parent["humanoid"]}
+    exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
+    assert exported.data.bones["Neck"].parent.name == "Chest"
+    assert exported.data.bones["LeftShoulder"].parent.name == "Chest"
+    assert exported.data.bones["RightShoulder"].parent.name == "Chest"
+    assert exported.data.bones["LeftUpperArm"].parent.name == "LeftShoulder"
+    assert exported.data.bones["Rib"].parent.name == "Chest"
+    assert exported.data.bones["Head"].parent.name == "Neck"
+    for bone in exported.data.bones:
+        assert max(abs(bone.head_local[index] - rib_heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
     # Sparse skins must not bind every unused jiggle/control bone into every
     # mesh. Keep all transforms and exact weighted bindings/morphs instead.
     from io_scene_fbx import parse_fbx, encode_bin
@@ -733,7 +829,7 @@ def main():
             assert abs(weights["Breast.L"] - .2) < 1e-5 and abs(weights["Butt.L"] - .2) < 1e-5
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "sparse_skin_cluster_bone_weight_morph_retention": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True}))
 
 
 if __name__ == "__main__":
