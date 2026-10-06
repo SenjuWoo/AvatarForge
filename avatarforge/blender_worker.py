@@ -1691,7 +1691,7 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
              object_types={"ARMATURE", "MESH"}, use_mesh_modifiers=False,
              use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
              path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
-             apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS", use_custom_props=True)
+             apply_unit_scale=True, apply_scale_options="FBX_SCALE_NONE", use_custom_props=True)
     finally:
         encode_bin.write = original_write
     # Saved conversions must survive moving the app or copying the output folder.

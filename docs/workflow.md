@@ -32,7 +32,7 @@ A real morph named Basis is renamed AF_Basis_Morph in the conversion copy becaus
 
 Earlier conversions keep their existing FBX bytes. Convert the source again with the current release to apply exporter fixes; preparing an old conversion does not rebuild its FBX.
 
-Empty per-mesh skin binding records are removed before export verification. Bone transforms, weighted bind matrices and bind poses remain; this avoids native Unity FBX stalls on large multi-mesh rigs.
+FBX export uses centimeter metadata with explicit object scaling for native Unity compatibility; Blender round-trip checks verify the retained rig. Empty per-mesh skin binding records are removed before export verification. Bone transforms, weighted bind matrices and bind poses remain; this avoids native Unity FBX stalls on large multi-mesh rigs.
 
 First Unity imports compile the SDK and build an asset cache. Large generated rigs can take substantially longer than simple models; automated preparation has a 30-minute limit. The Unity log identifies the last importing asset. Extra retained bones may also exceed VRChat performance budgets; preservation is not permission to silently discard them.
 

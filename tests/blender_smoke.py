@@ -710,6 +710,9 @@ def main():
     assert not sparse["integrity"]["missing_bones"] and not sparse["integrity"]["missing_weighted_bones"]
     assert not sparse["integrity"]["missing_shape_keys"] and not sparse["integrity"]["geometry_errors"]
     tree, _ = parse_fbx.parse(str(folder / "fixture-sparse-skin" / "model.fbx"))
+    globals_ = next(element for element in tree.elems if element.id == b"GlobalSettings")
+    properties = next(element for element in globals_.elems if element.id == b"Properties70")
+    assert next(element.props[4] for element in properties.elems if element.props[0] == b"UnitScaleFactor") == 1.0
     objects = next(element for element in tree.elems if element.id == b"Objects")
     clusters = [element for element in objects.elems if element.id == b"Deformer" and element.props[2] == b"Cluster"]
     assert len(clusters) == 6
