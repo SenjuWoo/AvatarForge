@@ -811,7 +811,7 @@ namespace AvatarForge.Editor
                 SceneManager.MoveGameObjectToScene(camera, scene);
                 camera.AddComponent<Camera>();
                 Bounds bounds = RendererBounds(preview);
-                camera.transform.position = bounds.center + new Vector3(0, 0, Mathf.Max(bounds.size.y, 1) * 1.7f);
+                camera.transform.position = bounds.center + new Vector3(0, 0, Mathf.Max(bounds.size.x, bounds.size.y, 1) * 1.7f + bounds.extents.z);
                 camera.transform.LookAt(bounds.center);
                 string path = destination + "/Preview.unity";
                 if (!EditorSceneManager.SaveScene(scene, path)) throw new IOException("Unity could not save the avatar preview scene.");

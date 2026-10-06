@@ -2,6 +2,7 @@
 
 ## 0.2.1
 
+- Frame wide and deep models fully in the generated Unity preview camera.
 - Prevent native Unity import stalls on large multi-mesh rigs by removing empty FBX skin clusters; every bone, weighted bind matrix and bind pose remains intact.
 
 - Retain visible bodies with Collision/Cloth modifiers and explicitly included meshes in hidden collections; verify exported mesh vertex and triangle counts.
