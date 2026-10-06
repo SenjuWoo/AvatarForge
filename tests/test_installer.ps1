@@ -44,9 +44,18 @@ try {
     $receiptRoot=Join-Path $runtimeRoot 'receipts'
     $destination=Join-Path $runtimeRoot 'fixture'
     Assert-True (Test-Receipt $receipt fixture $destination $entry) 'Moved payload did not validate by relative destination.'
+    # Repair after relocation must work before a successful rerun refreshes the old receipt.
+    [IO.File]::WriteAllText((Join-Path $destination 'license.txt'),'modified moved payload')
+    Assert-True ($receipt.destination -ne [IO.Path]::GetFullPath($destination)) 'Relocation fixture accidentally refreshed its receipt.'
+    Assert-True (Test-ReceiptLocation $receipt fixture $destination) 'Moved owned payload lost its repair authorization.'
+    Assert-True (-not(Test-Receipt $receipt fixture $destination $entry)) 'Modified moved payload was accepted.'
     Install-Portable fixture $destination marker.txt
     $receipt=Get-Receipt fixture
     Assert-True ($receipt.destination -eq [IO.Path]::GetFullPath($destination)) 'Moved receipt was not refreshed.'
+    Assert-True (Test-Receipt $receipt fixture $destination $entry) 'Repaired moved payload did not validate.'
+    $movedBackups=@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Filter 'fixture.backup-*')
+    Assert-True ($movedBackups.Count -eq 1) 'Moved repair did not preserve the previous installation.'
+    Assert-True ([IO.File]::ReadAllText((Join-Path $movedBackups[0].FullName 'license.txt')) -eq 'modified moved payload') 'Moved repair altered the preserved bytes.'
 
     # A marker alone must never classify a partial or modified installation as ready.
     [IO.File]::WriteAllText((Join-Path $destination 'license.txt'),'modified user bytes')
@@ -56,8 +65,9 @@ try {
     Assert-True (-not $state.installed.fixture) 'Install state advertised a failed payload verification.'
     Install-Portable fixture $destination marker.txt
     $backups=@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Filter 'fixture.backup-*')
-    Assert-True ($backups.Count -eq 1) 'Repair did not preserve the previous installation.'
-    Assert-True ([IO.File]::ReadAllText((Join-Path $backups[0].FullName 'license.txt')) -eq 'modified user bytes') 'Repair altered the preserved bytes.'
+    Assert-True ($backups.Count -eq 2) 'Repair did not preserve both previous installations.'
+    $modifiedBackups=@($backups | Where-Object {[IO.File]::ReadAllText((Join-Path $_.FullName 'license.txt')) -eq 'modified user bytes'})
+    Assert-True ($modifiedBackups.Count -eq 1) 'Repair altered the preserved bytes.'
     Assert-True (Test-Receipt (Get-Receipt fixture) fixture $destination $entry) 'Repaired payload did not validate.'
     Remove-Item -LiteralPath (Join-Path $destination 'license.txt')
     Assert-True (-not(Test-Receipt (Get-Receipt fixture) fixture $destination $entry)) 'Partial payload was accepted.'

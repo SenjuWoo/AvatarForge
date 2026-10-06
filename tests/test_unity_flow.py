@@ -57,7 +57,7 @@ class UnityFailureChecks(unittest.TestCase):
         self.project = self.root / "new-unity"
         self.calls = []
 
-    def prepare(self, exit_code=2, verdict="blocked"):
+    def prepare(self, exit_code=2, verdict="blocked", save_assets=True, timeout=False):
         def child(args, **kwargs):
             self.calls.append(args)
             if len(args) > 1 and args[1] == "new":
@@ -68,8 +68,19 @@ class UnityFailureChecks(unittest.TestCase):
                 for name in ("com.vrchat.base", "com.vrchat.avatars"):
                     core.write_json(self.project / "Packages" / name / "package.json", {"name": name, "version": self.sdk_version})
             if "-batchmode" in args:
+                if timeout:
+                    self.assertEqual(kwargs["timeout"], 1800)
+                    raise subprocess.TimeoutExpired(args, kwargs["timeout"])
                 if verdict is not None:
-                    core.write_json(self.folder / "unity-report.json", {"status": verdict, "issues": [{"severity": "error", "message": "generated rig error"}] if verdict == "blocked" else []})
+                    report = {"status": verdict, "issues": [{"severity": "error", "message": "generated rig error"}] if verdict == "blocked" else []}
+                    if save_assets and verdict != "blocked":
+                        for key, name in (("prefab", "Avatar.prefab"), ("scene", "Preview.unity")):
+                            asset = "Assets/AvatarForge/Completed/" + name
+                            path = self.project / asset
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text("generated saved asset marker; never opened", encoding="utf-8")
+                            report[key] = asset
+                    core.write_json(self.folder / "unity-report.json", report)
                 return subprocess.CompletedProcess(args, exit_code)
             return subprocess.CompletedProcess(args, 0)
         with patch.object(core, "ROOT", self.root), patch.object(core, "discover_tool", return_value="generated-Unity.exe"), patch.object(core, "run_owned", side_effect=child):
@@ -111,6 +122,21 @@ class UnityFailureChecks(unittest.TestCase):
         result = self.prepare(exit_code=0, verdict="needs_review")
         self.assertEqual(result["report"]["status"], "needs_review")
         self.assertEqual(core.read_json(self.folder / "unity-project.json")["import_state"], "complete")
+
+    def test_ready_verdict_without_saved_assets_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "usable prefab and preview scene"):
+            self.prepare(exit_code=0, verdict="ready", save_assets=False)
+        self.assertTrue(self.project.is_dir())
+        self.assertEqual(core.read_json(self.folder / "unity-project.json")["import_state"], "failed")
+        self.assertEqual(core.read_json(self.folder / "unity-report.json")["status"], "ready")
+
+    def test_import_timeout_keeps_project_and_records_recovery_state(self):
+        with self.assertRaisesRegex(RuntimeError, "exceeded 30 minutes"):
+            self.prepare(timeout=True)
+        self.assertTrue((self.project / "ProjectSettings").is_dir())
+        self.assertEqual(core.read_json(self.folder / "unity-project.json"),
+                         {"project": str(self.project), "import_state": "timed_out"})
+        self.assertFalse((self.folder / "unity-report.json").exists())
 
     def test_failed_report_is_visible_without_legacy_project_link(self):
         core.write_json(self.folder / "unity-report.json", {"status": "blocked", "issues": [{"message": "generated failure"}]})

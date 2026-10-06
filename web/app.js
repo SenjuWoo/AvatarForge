@@ -40,6 +40,7 @@ async function refreshHistory(restore=false) {
 }
 async function loadJob(id) {
   if(polling || preparingUnity) return;
+  message("");
   activeJob=await api("job",{id}); $("empty").classList.add("hidden"); $("result").classList.remove("hidden");
   $("preview").classList.add("hidden"); $("unity").disabled=true;
   $("job-state").className="status"; $("metrics").replaceChildren(); $("issues").replaceChildren(); $("integrity").textContent="";
@@ -47,7 +48,7 @@ async function loadJob(id) {
   $("cancel").classList.toggle("hidden",!["queued","converting"].includes(activeJob.state));
   $("log").textContent=activeJob.log || "";
   if(["queued","converting"].includes(activeJob.state)) { $("convert").disabled=true; pollJob(); }
-  else if(activeJob.state==="complete") await renderReport(activeJob);
+  else if(activeJob.report) { await renderReport(activeJob); if(activeJob.error) message(activeJob.error); }
   else { $("job-state").textContent=activeJob.state; message(activeJob.error || activeJob.state); }
 }
 $("history").onchange=()=>guarded(()=>loadJob($("history").value));
@@ -136,14 +137,15 @@ async function pollJob() {
     $("cancel").classList.add("hidden");
     $("convert").disabled=!$("model").value;
     if(activeJob.state === "complete") { await renderReport(activeJob); message("Conversion finished. Review the checks before continuing to Unity."); }
-    else { $("job-state").classList.add("bad"); message(activeJob.error || "Conversion cancelled; diagnostic output was kept."); }
+    else { if(activeJob.report) await renderReport(activeJob); $("job-state").classList.add("bad"); message(activeJob.error || "Conversion cancelled; diagnostic output was kept."); }
   } catch(error) { message(error.message); $("convert").disabled=!$("model").value; }
   finally { polling=false; $("history").disabled=false; }
   await refreshHistory();
 }
 async function renderReport(job) {
   const report=job.report, summary=report.summary || {}, integrity=report.integrity || {};
-  $("job-state").textContent=report.status.replaceAll("_"," "); $("job-state").className="status "+(report.status==="ready"?"good":report.status==="blocked"?"bad":"warn");
+  const displayStatus=job.state==="complete"?report.status:job.state;
+  $("job-state").textContent=displayStatus.replaceAll("_"," "); $("job-state").className="status "+(displayStatus==="ready"?"good":["failed","blocked","interrupted"].includes(displayStatus)?"bad":"warn");
   $("metrics").replaceChildren();
   for(const [key,label] of [["triangles","Triangles"],["bones","Bones"],["materials","Materials"],["shape_keys","Shape keys"]]) { const box=document.createElement("div"); box.className="metric"; const number=document.createElement("b"); number.textContent=Number(summary[key] || 0).toLocaleString(); const name=document.createElement("span"); name.textContent=label; box.append(number,name); $("metrics").append(box); }
   const missing=(integrity.missing_bones || []).length, shapes=Object.keys(integrity.missing_shape_keys || {}).length, weights=(integrity.missing_weighted_bones || []).length;
@@ -155,13 +157,15 @@ async function renderReport(job) {
   $("physics").replaceChildren();
   for(const [index,item] of (report.physics || []).entries()) { const row=document.createElement("div"); row.className="physics-item"; const box=document.createElement("input"); box.type="checkbox"; box.id=`physics-${index}`; box.value=item.bone; box.checked=Array.isArray(job.approved_physics)?job.approved_physics.includes(item.bone):item.approved===true; const label=document.createElement("label"); label.htmlFor=box.id; label.textContent=`${item.bone} · ${item.category}`; row.append(box,label); $("physics").append(row); }
   $("physics-panel").classList.toggle("hidden",!(report.physics || []).length);
-  $("unity").disabled=report.status==="blocked" || Boolean(job.unity_project);
-  $("unity").textContent=job.unity_project?"Unity project created":"Create VRChat Unity project";
+  const unityComplete=job.unity_project?.import_state==="complete" && Boolean(job.unity_report?.prefab && job.unity_report?.scene);
+  $("unity").disabled=job.state!=="complete" || report.status==="blocked" || unityComplete;
+  $("unity").textContent=unityComplete?"Unity prefab & scene prepared":job.unity_project?"Retry in a new Unity project":"Prepare Unity prefab & scene";
   $("open-unity").classList.toggle("hidden",!job.unity_project); $("open-blender").disabled=false;
   $("unity-status").textContent=""; clearUnityChecks();
   if(job.unity_report) {
     const unity=job.unity_report, verdict=unity.status.replaceAll("_"," "), lines=[unity.prefab?`Unity: ${verdict} · ${Number(unity.triangles || 0).toLocaleString()} triangles · ${unity.bones} bones · ${unity.blendshapes} shape keys.`:`Unity: ${verdict} · import incomplete. Open the kept project to repair the reported issue.`];
-    if(typeof unity.humanoid_pose_verified==="boolean") lines.push(`Humanoid T-pose calibration: ${unity.humanoid_pose_verified?"verified":"needs repair"}.`);
+    if(unity.humanoid_human && typeof unity.humanoid_pose_verified==="boolean") lines.push(`Humanoid T-pose calibration: ${unity.humanoid_pose_verified?"verified":"needs repair"}.`);
+    else if(unity.prefab) lines.push("Generic rig preview: all limbs retained. Humanoid tracking needs a compatible rig; review the SDK requirements.");
     if(typeof unity.blendshape_defaults_verified==="boolean") lines.push(`Authored shape-key values: ${unity.blendshape_defaults_verified?"restored":"needs review"}.`);
     if(unity.optimization && unity.optimization.status!=="not_needed" && unity.optimization.target_triangles>0) lines.push(`Optimization: ${unity.optimization.status.replaceAll("_"," ")} · target ${Number(unity.optimization.target_triangles).toLocaleString()} triangles.`);
     if(unity.texture_storage_estimate_available) {
@@ -198,7 +202,7 @@ $("unity").onclick=()=>guarded(async()=>{
     try { if(activeJob?.id===id) { activeJob=await api("job",{id}); await renderReport(activeJob); } }
     catch(error) { if(!failure) failure=error; }
     preparingUnity=false; $("history").disabled=polling; $("convert").disabled=polling || starting || !$("model").value;
-    $("unity").disabled=activeJob?.state!=="complete" || Boolean(activeJob?.unity_project) || activeJob?.report?.status==="blocked";
+    $("unity").disabled=activeJob?.state!=="complete" || (activeJob?.unity_project?.import_state==="complete" && Boolean(activeJob?.unity_report?.prefab && activeJob?.unity_report?.scene)) || activeJob?.report?.status==="blocked";
   }
   if(failure) throw failure;
 });

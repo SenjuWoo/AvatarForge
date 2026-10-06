@@ -39,9 +39,19 @@ for side in ("Left", "Right"):
 def normalize(name):
     """Return anatomical name, side and penalty for generated control prefixes."""
     name = name.casefold()
+    # Numbered game deformers encode side and joint order explicitly. Do not
+    # interpret arbitrary leg1/arm1 names using this namespace convention.
+    game = re.fullmatch(r"game_([clr])\d+_(.+)", name)
+    if game:
+        side = {"c": None, "l": "Left", "r": "Right"}[game.group(1)]
+        joint = game.group(2)
+        anatomy = {"hip1": "hips", "spine1": "spine", "spine2": "chest", "spine3": "upperchest",
+                   "clav1": "shoulder", "arm1": "upperarm", "arm2": "lowerarm", "arm3": "hand",
+                   "leg1": "upperleg", "leg2": "lowerleg", "leg3": "foot", "leg4": "toes"}
+        return anatomy.get(joint, joint), side, False
     generated = bool(re.match(r"^(?:def|org|mch|ctrl|ik|fk|dsp|root)[-_]", name))
     name = re.sub(r"^(?:def|org|mch|ctrl|ik|fk|dsp|root)[-_]", "", name)
-    name = re.sub(r"^(?:mixamorig[:_]?|valvebiped[._]?bip0?[12][._]?|bip0?[12][._]?)", "", name)
+    name = re.sub(r"^(?:mixamorig[:_]?|valvebiped[._]?bip0?[12][._]?|bip0?[12][._]?|bip[._])", "", name)
     side = None
     for label, tokens in (("Left", ("left", "左")), ("Right", ("right", "右"))):
         for token in tokens:

@@ -202,14 +202,15 @@ namespace AvatarForge.Editor
                 instance.name = SafeName(new DirectoryInfo(input).Name);
                 if (output.humanoid_pose_verified)
                     output.humanoid_pose_error = AvatarForgeHumanoidPose.ApplyVerifiedPose(importer, instance, model.name);
-                var animator = instance.GetComponent<Animator>() ?? instance.AddComponent<Animator>();
+                var animator = instance.GetComponent<Animator>();
+                if (!animator) animator = instance.AddComponent<Animator>();
                 var avatar = AssetDatabase.LoadAllAssetsAtPath(modelPath).OfType<Avatar>().FirstOrDefault();
                 animator.avatar = avatar;
                 animator.applyRootMotion = false;
                 output.humanoid_valid = avatar && avatar.isValid;
                 output.humanoid_human = avatar && avatar.isHuman;
                 if (!output.humanoid_valid || !output.humanoid_human)
-                    AddIssue(issues, "error", "HUMANOID_INVALID", "The imported Avatar is not a valid Humanoid. Review the rig mapping and rest pose; the original bones are retained.");
+                    AddIssue(issues, missing.Length > 0 ? "review" : "error", "HUMANOID_INVALID", "The imported Avatar is not a valid Humanoid. Generic preview retains all bones; tracked Humanoid motion requires a compatible mapping and rest pose.");
                 VerifyBones(source, instance, output, issues);
                 VerifyShapeKeys(source, instance, output, issues);
                 VerifySkinWeights(source, instance, output, issues);
@@ -307,7 +308,7 @@ namespace AvatarForge.Editor
         static PhysicsApproval LoadApprovals(string input)
         {
             string path = Path.Combine(input, "unity-overrides.json");
-            return File.Exists(path) ? JsonUtility.FromJson<PhysicsApproval>(File.ReadAllText(ResolveContainedFile(input, "unity-overrides.json"))) ?? new PhysicsApproval() : new PhysicsApproval();
+            return File.Exists(path) ? JsonUtility.FromJson<PhysicsApproval>(File.ReadAllText(ResolveContainedFile(input, "unity-overrides.json"))) ?? new PhysicsApproval() : null;
         }
 
         static HumanBone[] BuildHumanMap(ConversionReport source, Transform[] transforms, List<ConversionIssue> issues, out string[] missing)
@@ -330,7 +331,7 @@ namespace AvatarForge.Editor
             }
             string[] required = HumanTrait.BoneName.Where((n, i) => HumanTrait.RequiredBone(i)).ToArray();
             missing = required.Where(n => !assignedHumans.Contains(n)).ToArray();
-            if (missing.Length > 0) AddIssue(issues, "error", "MISSING_REQUIRED_HUMANOID", "Missing required Humanoid bones: " + string.Join(", ", missing));
+            if (missing.Length > 0) AddIssue(issues, "review", "MISSING_REQUIRED_HUMANOID", "Generic rig retained; missing required Humanoid bones: " + string.Join(", ", missing));
             return mapped.ToArray();
         }
 
@@ -595,7 +596,8 @@ namespace AvatarForge.Editor
             output.sdk_available = descriptorType != null && physicsType != null;
             if (descriptorType != null && typeof(Component).IsAssignableFrom(descriptorType))
             {
-                Component descriptor = instance.GetComponent(descriptorType) ?? instance.AddComponent(descriptorType);
+                Component descriptor = instance.GetComponent(descriptorType);
+                if (!descriptor) descriptor = instance.AddComponent(descriptorType);
                 output.descriptor_added = true;
                 Type pipelineType = FindType("VRC.Core.PipelineManager");
                 if (pipelineType != null && typeof(Component).IsAssignableFrom(pipelineType))
@@ -605,7 +607,8 @@ namespace AvatarForge.Editor
                 }
                 else AddIssue(issues, "error", "SDK_PIPELINE_MISSING", "The official SDK PipelineManager is unavailable; resolve the VRChat Base package before building.");
                 var animator = instance.GetComponent<Animator>();
-                Transform head = animator.avatar && animator.avatar.isValid && animator.avatar.isHuman ? animator.GetBoneTransform(HumanBodyBones.Head) : null;
+                Transform head = animator && animator.avatar && animator.avatar.isValid && animator.avatar.isHuman ? animator.GetBoneTransform(HumanBodyBones.Head) : null;
+                if (!head) AddIssue(issues, "review", "GENERIC_VIEWPOINT_REVIEW", "Set the Avatar Descriptor viewpoint for this non-Humanoid model before SDK testing.");
                 if (head) SetField(descriptor, "ViewPosition", instance.transform.InverseTransformPoint(head.position) + new Vector3(0, 0, 0.06f));
                 ConfigureVisemes(instance, descriptor, issues);
             }
@@ -626,7 +629,7 @@ namespace AvatarForge.Editor
         {
             var results = new List<PhysicsResult>();
             var human = new HashSet<string>((source.humanoid ?? Array.Empty<Mapping>()).Select(x => x.boneName));
-            var approved = new HashSet<string>(approvals.approved_physics ?? Array.Empty<string>());
+            var approved = new HashSet<string>(approvals?.approved_physics ?? Array.Empty<string>());
             var claimed = new HashSet<Transform>();
             var candidates = (source.physics ?? Array.Empty<PhysicsSuggestion>()).OrderBy(x => (x.path ?? "").Count(c => c == '/'));
             foreach (var suggestion in candidates)
@@ -639,12 +642,13 @@ namespace AvatarForge.Editor
                 Transform[] chain = root.GetComponentsInChildren<Transform>(true);
                 if (chain.Any(t => human.Contains(t.name))) { result.reason = "Branch includes a Humanoid bone; physics is not applied."; continue; }
                 if (chain.Any(claimed.Contains)) { result.reason = "Already covered by a parent physics branch."; continue; }
-                if (suggestion.confidence < 0.9f && !suggestion.approved && !approved.Contains(suggestion.bone)) { result.reason = "Review and approve this inferred secondary branch in AvatarForge/Review physics suggestions."; continue; }
+                if (approvals != null ? !approved.Contains(suggestion.bone) : suggestion.confidence < 0.9f && !suggestion.approved) { result.reason = "Review and approve this inferred secondary branch in AvatarForge/Review physics suggestions."; continue; }
                 if (type == null || !typeof(Component).IsAssignableFrom(type)) { result.reason = "VRChat PhysBone SDK unavailable."; continue; }
                 bool needsEndpoint = root.childCount == 0 || !chain.Any(t => t != root && t.childCount > 0);
                 if (needsEndpoint && (!(suggestion.endpoint_length > 0) || float.IsInfinity(suggestion.endpoint_length)))
                 { result.reason = "A verified endpoint length is required for this short branch."; continue; }
-                Component component = root.GetComponent(type) ?? root.gameObject.AddComponent(type);
+                Component component = root.GetComponent(type);
+                if (!component) component = root.gameObject.AddComponent(type);
                 if (!SetField(component, "rootTransform", root)) { UnityEngine.Object.DestroyImmediate(component); result.reason = "SDK rootTransform public API changed."; continue; }
                 SetField(component, "pull", 0.5f); SetField(component, "spring", 0.2f); SetField(component, "gravity", 0f); SetField(component, "radius", 0f);
                 SetEnum(component, "limitType", "Angle"); SetField(component, "maxAngle", 30f);
@@ -867,7 +871,7 @@ namespace AvatarForge.Editor
             report = AvatarForgeImporter.LoadReport(input);
             string path = Path.Combine(input, "unity-overrides.json");
             var approvals = File.Exists(path) ? JsonUtility.FromJson<PhysicsApproval>(File.ReadAllText(path)) : new PhysicsApproval();
-            selected = new HashSet<string>(approvals?.approved_physics ?? Array.Empty<string>());
+            selected = new HashSet<string>(File.Exists(path) ? approvals?.approved_physics ?? Array.Empty<string>() : (report.physics ?? Array.Empty<PhysicsSuggestion>()).Where(p => p.approved || p.confidence >= 0.9f).Select(p => p.bone));
         }
         void OnGUI()
         {

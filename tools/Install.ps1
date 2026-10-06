@@ -128,15 +128,20 @@ function Get-Receipt($Id) {
     try{return Get-Content -Raw -LiteralPath $path | ConvertFrom-Json}catch{return $null}
 }
 
+function Test-ReceiptLocation($Receipt,$Id,$Destination) {
+    if(-not $Receipt -or $Receipt.schema_version -ne 2 -or $Receipt.id -ne $Id){return $false}
+    try{
+        $full=Assert-OwnedPath $Destination $runtimeRoot
+        $relative=$full.Substring([IO.Path]::GetFullPath($runtimeRoot).TrimEnd('\').Length+1).Replace('\','/')
+        return ([IO.Path]::GetFullPath($Receipt.destination) -eq $full -or $Receipt.destination_relative -eq $relative)
+    }catch{return $false}
+}
+
 function Test-Receipt($Receipt,$Id,$Destination,$Entry) {
     if(-not $Receipt -or $Receipt.schema_version -ne 2 -or $Receipt.id -ne $Id -or $Receipt.version -ne $Entry.version){return $false}
     $digest=Get-ArchiveDigest $Entry
     if($Receipt.archive_algorithm -ne $digest.algorithm -or $Receipt.archive_digest -ne $digest.value){return $false}
-    try{$destinationFull=Assert-OwnedPath $Destination $runtimeRoot}catch{return $false}
-    if([IO.Path]::GetFullPath($Receipt.destination) -ne $destinationFull){
-        $relative=$destinationFull.Substring([IO.Path]::GetFullPath($runtimeRoot).TrimEnd('\').Length+1).Replace('\','/')
-        if(-not $Receipt.destination_relative -or $Receipt.destination_relative -ne $relative){return $false}
-    }
+    if(-not(Test-ReceiptLocation $Receipt $Id $Destination)){return $false}
     return Test-Payload $Destination $Receipt.files
 }
 
@@ -188,7 +193,7 @@ function Install-Portable($Id,$Destination,$Marker) {
             $occupied=@(Get-ChildItem -LiteralPath $destinationFull -Force).Count -ne 0
             if($occupied){
                 # Only a receipt for this exact owned location allows a repair. Preserve every old byte.
-                if(-not $receipt -or $receipt.schema_version -ne 2 -or $receipt.id -ne $Id -or [IO.Path]::GetFullPath($receipt.destination) -ne $destinationFull){
+                if(-not(Test-ReceiptLocation $receipt $Id $destinationFull)){
                     throw "Unverified files occupy $destinationFull. They were preserved. Move them to a backup folder, then run Install again."
                 }
                 $backup=Assert-OwnedPath ($destinationFull+'.backup-'+[Guid]::NewGuid().ToString('N')) $runtimeRoot

@@ -71,7 +71,10 @@ def run_owned(args, **kwargs):
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    value = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{Path(path).name} must contain a JSON object.")
+    return value
 
 
 def write_json(path, value):
@@ -239,7 +242,9 @@ class Jobs:
                     job = read_json(receipt if receipt.exists() else pending)
                     if job.get("id") != folder.name:
                         continue
-                    if Path(job.get("output", "")).resolve() != folder.resolve():
+                    if not isinstance(job.get("output"), str):
+                        continue
+                    if Path(job["output"]).resolve() != folder.resolve():
                         if job.get("output_relative") != folder.name:
                             continue
                         job["output"] = str(folder.resolve())
@@ -252,7 +257,7 @@ class Jobs:
                     if job.get("state") in {"queued", "converting"}:
                         job.update(state="interrupted", error="The previous app session ended. Diagnostic output was kept; start a new conversion to retry.")
                     self.jobs[job["id"]] = job
-                except (OSError, ValueError, KeyError):
+                except (OSError, ValueError, KeyError, TypeError):
                     continue
 
     def start(self, source, preset="preserve", options=None, blender=None):
@@ -266,6 +271,8 @@ class Jobs:
         executable = discover_tool("blender", blender)
         if not executable:
             raise ValueError("Blender was not found. Use Install tools or set AVATARFORGE_BLENDER to blender.exe.")
+        if options is not None and not isinstance(options, dict):
+            raise ValueError("options must be a JSON object.")
         options = dict(options or {})
         if "height" in options and not (0.1 <= float(options["height"]) <= 10):
             raise ValueError("Avatar height must be between 0.1 and 10 metres.")
@@ -298,6 +305,7 @@ class Jobs:
         job = self.jobs[job_id]
         output = Path(job["output"])
         source = Path(job["source"])
+        process = None
         try:
             original_hash = sha256(source)
             self._update(job_id, state="converting", source_sha256=original_hash)
@@ -327,24 +335,41 @@ class Jobs:
                 raise RuntimeError("Source file changed during conversion. Check the source before proceeding.")
             report_path = output / "report.json"
             report = read_json(report_path) if report_path.exists() else None
-            if code or not report or not (output / "model.fbx").is_file():
-                detail = report.get("issues", []) if report else []
-                raise RuntimeError(f"Blender conversion stopped (exit {code}). {detail} See blender.log.")
+            if report:
+                self._update(job_id, report=report, source_unchanged=True)
+            if code or not report or report.get("status") == "blocked" or not (output / "model.fbx").is_file():
+                errors = [item.get("message", "") for item in (report or {}).get("issues", []) if item.get("severity") == "error"]
+                detail = " ".join(errors[:3])
+                raise RuntimeError(f"Blender conversion stopped (exit {code}). {detail} See the review items and blender.log.")
             self._update(job_id, state="complete", report=report, finished=time.time(), source_unchanged=True)
         except Exception as error:
             self._update(job_id, state="failed", error=str(error), finished=time.time())
         finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
             write_json(output / "receipt.json", self.get(job_id))
 
     def _update(self, job_id, **fields):
         with self.lock:
             self.jobs[job_id].update(fields)
+            snapshot = dict(self.jobs[job_id])
+            write_json(Path(snapshot["output"]) / "job.json", snapshot)
 
     def get(self, job_id):
         with self.lock:
             if job_id not in self.jobs:
                 raise ValueError("Unknown job.")
             job = dict(self.jobs[job_id])
+        if not job.get("report") and job.get("state") in {"failed", "interrupted"}:
+            try:
+                job["report"] = read_json(Path(job["output"]) / "report.json")
+            except (OSError, ValueError):
+                pass
         log_path = Path(job["output"]) / "blender.log"
         link_path = Path(job["output"]) / "unity-project.json"
         overrides_path = Path(job["output"]) / "unity-overrides.json"
@@ -486,7 +511,7 @@ def prepare_unity(input_folder, project=None):
         try:
             if report_path.exists():
                 report_path.rename(folder / ("unity-report.previous-" + uuid.uuid4().hex[:8] + ".json"))
-            result = run_owned([executable, "-batchmode", "-nographics", "-quit", "-projectPath", str(destination), "-executeMethod", "AvatarForge.Editor.AvatarForgeImporter.Batch", "-avatarForgeInput", str(folder), "-logFile", str(folder / "unity.log")], timeout=900, stdout=log, stderr=subprocess.STDOUT, creationflags=flags, env=environment)
+            result = run_owned([executable, "-batchmode", "-nographics", "-quit", "-projectPath", str(destination), "-executeMethod", "AvatarForge.Editor.AvatarForgeImporter.Batch", "-avatarForgeInput", str(folder), "-logFile", str(folder / "unity.log")], timeout=1800, stdout=log, stderr=subprocess.STDOUT, creationflags=flags, env=environment)
             if result.returncode:
                 raise RuntimeError(f"Unity stopped (exit {result.returncode}). The project was kept for repair at {destination}. See unity.log.")
             if not report_path.exists():
@@ -494,8 +519,16 @@ def prepare_unity(input_folder, project=None):
             unity_report = read_json(report_path)
             if unity_report.get("status") not in {"ready", "needs_review", "blocked"}:
                 raise RuntimeError("Unity emitted an invalid import verdict. See unity-report.json and unity.log.")
+            if unity_report["status"] != "blocked":
+                for key in ("prefab", "scene"):
+                    asset = unity_report.get(key)
+                    if not isinstance(asset, str) or not asset.startswith("Assets/AvatarForge/") or not (destination / asset).resolve().is_relative_to(destination) or not (destination / asset).is_file():
+                        raise RuntimeError("Unity did not save a usable prefab and preview scene. The project was kept for repair. See unity.log.")
             if unity_report["status"] == "blocked":
                 raise RuntimeError("Unity import is blocked. Open the kept project to repair the reported issues, then reimport the conversion folder.")
+        except subprocess.TimeoutExpired as error:
+            write_json(link_path, {"project": str(destination), "import_state": "timed_out"})
+            raise RuntimeError("Unity import exceeded 30 minutes; no completed prefab/scene verdict was received. The project and unity.log were kept. Open the project, let its import finish, then choose AvatarForge > Import conversion folder to complete preparation.") from error
         except Exception:
             state = "failed"
             try:

@@ -298,8 +298,7 @@ def choose_objects(options, report):
             raise CapabilityError("Selected meshes bind different armatures; convert each character separately.")
     else:
         meshes = [o for o in all_meshes if (not rig or rig in linked_rig(o)) and
-                  (options.get("include_hidden", False) or visibility[o]) and
-                  not any(m.type in {"CLOTH", "COLLISION"} for m in o.modifiers)]
+                  (options.get("include_hidden", False) or visibility[o])]
     if not meshes:
         raise CapabilityError("No character meshes selected. Pick meshes or enable include_hidden.")
     report["selection"] = {"armature": rig.name if rig else None,
@@ -312,6 +311,21 @@ def choose_objects(options, report):
                            "excluded_meshes": [o.name for o in all_meshes if o not in meshes]}
     if not rig:
         issue(report, "warning", "no_armature", "Static mesh has no skeleton. Humanoid rigging and skin weights require a rigged source or manual rigging.")
+    # Explicitly selected hidden meshes must be present in the view layer for FBX operators.
+    chosen = set(meshes + ([rig] if rig else []))
+    def reveal(layer):
+        needed = any(obj in chosen for obj in layer.collection.all_objects)
+        if needed:
+            layer.exclude = False
+            layer.hide_viewport = False
+            layer.collection.hide_viewport = False
+            layer.collection.hide_render = False
+            for child in layer.children:
+                reveal(child)
+    reveal(bpy.context.view_layer.layer_collection)
+    for obj in chosen:
+        obj.hide_viewport = obj.hide_render = False
+        obj.hide_set(False)
     return rig, meshes
 
 
@@ -420,6 +434,8 @@ def materialize_visibility_masks(meshes, options, report):
                  (mod.type == "MASK" or mod.type == "NODES" and deletion_tree(mod.node_group))]
         if not masks:
             continue
+        if mesh.data.users > 1:
+            mesh.data = mesh.data.copy()
         original = mesh.data.copy()
         states = [(mod, mod.show_viewport, mod.show_render) for mod in mesh.modifiers]
         identifier = "AF_SourceVertex"
@@ -535,7 +551,8 @@ def repair_generated_hierarchy(rig, weighted, relationships, options, report):
     preferred = weighted | {bone.name for bone in rig.data.bones if bone.use_deform}
     mapped, missing, _ = map_humanoid(names, options.get("humanoid_overrides", options.get("humanoid")), preferred)
     by_human = {item["humanName"]: item["boneName"] for item in mapped}
-    if missing or not all(by_human.get(name, "").startswith("DEF-") for name in ("Hips", "LeftUpperLeg", "RightUpperLeg", "LeftUpperArm", "RightUpperArm")):
+    core = [by_human.get(name, "") for name in ("Hips", "LeftUpperLeg", "RightUpperLeg", "LeftUpperArm", "RightUpperArm")]
+    if missing or not (all(name.startswith("DEF-") for name in core) or all(name.startswith("GAME_") and name in weighted for name in core)):
         return
     controls, _, _ = map_humanoid(names)
     proxies = {item["boneName"]: by_human[item["humanName"]] for item in controls
@@ -752,7 +769,7 @@ def optimize(meshes, rig, preset, options, report):
     report["optimization"]["triangles_after"] = triangles(meshes)
     nonportable = []
     for mesh in meshes:
-        modifiers = [m.type for m in mesh.modifiers if m.type not in {"ARMATURE", "SUBSURF"}]
+        modifiers = [m.type for m in mesh.modifiers if m.type != "ARMATURE" and (m.show_viewport or m.show_render)]
         if modifiers:
             nonportable.append({"mesh": mesh.name, "modifiers": modifiers})
         if not mesh.data.uv_layers:
@@ -1395,6 +1412,10 @@ def texture_manifest(meshes, source, output, preset, options, report):
     limit = int(options.get("texture_size", PRESETS[preset]["texture_size"]))
     if limit and not 64 <= limit <= 16384:
         raise ValueError("texture_size must be 0 or 64..16384 pixels")
+    for material in materials:
+        outputs = [node for node in material.node_tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output] if material.node_tree else []
+        if material.use_nodes and (len(outputs) != 1 or not outputs[0].inputs["Surface"].is_linked):
+            issue(report, "warning", "material_surface_unconnected", material.name + ": no active linked material Surface. Texture extraction is an approximation; inspect the source shader before using Unity materials.")
     flatten_udims(meshes, materials, source, output, limit, report)
     mode = options.get("bake_materials", "auto")
     if mode not in (True, False, "auto"):
@@ -1549,8 +1570,11 @@ def preview(meshes, output, report):
                   if obj.type in {"MESH", "LIGHT"}]
     modifiers = [(modifier, modifier.show_render) for mesh in meshes
                  for modifier in mesh.modifiers if modifier.type != "ARMATURE"]
+    media_type = getattr(scene.render.image_settings, "media_type", None)
     camera = light = world = None
     try:
+        if media_type is not None:
+            scene.render.image_settings.media_type = "IMAGE"
         scene.render.engine = "CYCLES"
         scene.cycles.device, scene.cycles.samples = "CPU", 8
         scene.cycles.use_denoising = False
@@ -1595,6 +1619,8 @@ def preview(meshes, output, report):
     except Exception as exc:
         issue(report, "info", "preview_unavailable", str(exc))
     finally:
+        if media_type is not None:
+            scene.render.image_settings.media_type = media_type
         (scene.render.engine, scene.cycles.device, scene.cycles.samples,
          scene.cycles.use_denoising, scene.camera, scene.world,
          scene.render.resolution_x, scene.render.resolution_y,
@@ -1614,6 +1640,7 @@ def preview(meshes, output, report):
 
 
 def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report):
+    expected_meshes = {mesh.name: {"vertices": len(mesh.data.vertices), "triangles": triangles([mesh])} for mesh in meshes}
     chosen = meshes + ([rig] if rig else [])
     bpy.ops.object.select_all(action="DESELECT")
     for obj in chosen:
@@ -1630,6 +1657,8 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
     # Saved conversions must survive moving the app or copying the output folder.
     # FBX has already resolved the absolute PNGs above. The blend stores only
     # images inside this conversion relative to its own directory.
+    # Source auto-pack must not resolve output-relative images against the old source directory while saving.
+    bpy.data.use_autopack = False
     for image in bpy.data.images:
         if not image.filepath or image.packed_file:
             continue
@@ -1648,6 +1677,8 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
     exported_rigs = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
     export_bones = sorted({b.name for r in exported_rigs for b in r.data.bones})
     exported_meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    actual_meshes = {mesh.name: {"vertices": len(mesh.data.vertices), "triangles": triangles([mesh])} for mesh in exported_meshes}
+    geometry_errors = {name: {"expected": counts, "actual": actual_meshes.get(name)} for name, counts in expected_meshes.items() if actual_meshes.get(name) != counts}
     export_shapes = shape_manifest(exported_meshes)
     export_weighted = set().union(*(weighted_bones(exported_meshes, r) for r in exported_rigs)) if exported_rigs else set()
     missing_weighted = sorted(set(report.get("weighted_bones", [])) - export_weighted)
@@ -1658,9 +1689,12 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
                            "missing_bones": missing_bones, "intentionally_excluded_controllers": excluded,
                            "source_shape_keys": source_shapes, "export_shape_keys": export_shapes,
                            "missing_shape_keys": missing_shapes, "fbx_roundtrip_verified": True,
+                           "source_meshes": expected_meshes, "export_meshes": actual_meshes, "geometry_errors": geometry_errors,
                            "source_weighted_bones": report.get("weighted_bones", []),
                            "export_weighted_bones": sorted(export_weighted), "missing_weighted_bones": missing_weighted}
     report["export_bones"] = export_bones
+    if geometry_errors:
+        issue(report, "error", "export_mesh_integrity", "FBX round-trip changed or lost selected mesh geometry: " + ", ".join(geometry_errors))
     if missing_bones or missing_shapes:
         issue(report, "error", "export_integrity", "FBX round-trip lost required bones or shape keys. Do not use this export until repaired.")
     else:
@@ -1682,7 +1716,8 @@ def run(job):
     preset = job.get("preset", "preserve")
     report = {"schema_version": 1, "source": str(source), "preset": preset,
               "status": "blocked", "issues": [], "summary": {}, "humanoid": [], "physics": [],
-              "missing_required_humanoid": [], "blender_version": bpy.app.version_string}
+              "missing_required_humanoid": [], "blender_version": bpy.app.version_string,
+              "animation": {"mode": "avatar_bind_pose", "embedded_clips": False, "note": "VRChat drives the prepared rig. Source Blender actions, drivers and simulation are not exported as animation clips."}}
     try:
         if preset not in PRESETS:
             raise ValueError("Unknown preset: " + str(preset))
@@ -1696,6 +1731,17 @@ def run(job):
         enable_addons(job.get("addon_paths", []), report, source.suffix.lower())
         import_source(source, report, options)
         rig, meshes = choose_objects(options, report)
+        renames = []
+        for mesh in meshes:
+            keys = mesh.data.shape_keys
+            if keys:
+                for key in keys.key_blocks:
+                    if key != keys.reference_key and key.name == "Basis":
+                        key.name = "AF_Basis_Morph"
+                        renames.append({"mesh": mesh.name, "source": "Basis", "export": key.name})
+        if renames:
+            report["shape_key_renames"] = renames
+            issue(report, "info", "reserved_shape_name", "Renamed real morphs called Basis in the conversion copy because Blender FBX reserves that name. Shape geometry and fitting values are retained.")
         source_shapes = shape_manifest(meshes)
         freeze_source_inputs(meshes, report)
         freeze_shape_defaults(meshes, report)

@@ -19,7 +19,13 @@ Connect AI checks the local server and preserves your existing client settings. 
 1. Browse to a model, its folder, or a ZIP. Choose the intended file when a pack contains several models.
 2. Choose **Preserve**, **PC balanced** or **Mobile candidate**, then **Convert model**.
 3. Review the preview, bone/shape-key checks, material issues and suggested secondary motion roots.
-4. Select the roots you want simulated, then **Create VRChat Unity project**. Open the generated project, inspect movement/materials, and run the official SDK checks.
+4. Select the roots you want simulated, then **Prepare Unity prefab & scene**. Wait for the Unity import verdict, then **Open Unity project**. Inspect the prepared avatar and run the official SDK checks.
+
+**Do not import the whole output folder into Unity Assets.** Dragging in `model.fbx` alone skips AvatarForge's material reconstruction, rig calibration, authored shape values and selected PhysBones. `model.blend` belongs outside Assets; Unity may try to launch Blender to import it. For an existing project, add the included Unity package from disk and use **AvatarForge → Import conversion folder**. Open the generated `Preview.unity` scene or `Avatar.prefab`.
+
+A converted FBX normally contains **no animation clips**. This avatar workflow exports bind/rest geometry; VRChat tracking and default playable layers drive a valid prepared Humanoid rig. Blender drivers, constraints and cloth are not Unity animation clips. A Generic creature retains every limb but needs its own animation/controller work.
+
+Project creation and import completion are separate steps. A kept project after a timeout is diagnostic output, not a prepared avatar. Open it, let imports finish, then use the AvatarForge import menu; the app also offers a retry into a new project. The button reports completion only when a current Unity verdict references actual saved prefab and scene files. See [workflow and troubleshooting](docs/workflow.md).
 
 Every conversion writes into a new `outputs/<job>/` folder. Source files are read without enabling embedded Blender scripts; their main file hashes are checked before/after conversion. Background Blender uses an isolated profile. Recent jobs survive an app restart.
 
@@ -32,11 +38,11 @@ Supported complex Blender shaders bake automatically on the local CPU. Proven co
 - Imports supported native formats and pinned external importers; detects model candidates instead of executing downloaded SFM rig scripts.
 - Resolves available textures, extracts PNGs, caps texture size by preset and flattens supported UDIM sets with UV metadata.
 - Selects the mesh-linked character armature, exports bind/rest pose and reports nonportable controls, cloth and constraints.
-- Preserves weighted bones, secondary bones and shape keys. It verifies the actual exported FBX by importing it back into Blender, including a check that every expected weighted bone remains weighted.
+- Preserves weighted bones, secondary bones and shape keys. It verifies the actual exported FBX by importing it back into Blender, including selected mesh vertex/triangle counts and a check that every expected weighted bone remains weighted.
 - Captures authored shape-key values before removing source drivers and restores those values on the saved Unity prefab. Supported deletion masks retain every shape frame and an unmasked mesh backup in the saved Blender file.
 - Exports `model.blend`, `model.fbx`, textures, a preview, a conversion manifest and diagnostic logs.
 - Maps common Source/Valve, Blender, MMD and conventional humanoid names, with explicit overrides for ambiguity.
-- Configures Unity Humanoid import, reconstructs materials, creates a prefab/preview scene and adds a VRChat descriptor when the SDK is present.
+- Configures compatible Unity Humanoid import or retains a Generic preview for other rigs, reconstructs materials, creates a prefab/preview scene and adds a VRChat descriptor when the SDK is present.
 - Calibrates Unity's Humanoid T-pose and independently checks the saved importer and prepared prefab pose. Missing or ambiguous mappings remain review items.
 - Keeps Unity's bone/Transform optimizations disabled so secondary bones remain addressable. Verifies bones, named blendshapes and weighted-bone names again after Unity import.
 - Imports Blender's authored blendshape normals with legacy recalculation disabled, and enables streaming mipmaps on referenced mipmapped textures for the SDK handoff.

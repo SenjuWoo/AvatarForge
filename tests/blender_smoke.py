@@ -19,6 +19,7 @@ from bone_aliases import map_humanoid
 
 def fixture(folder):
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.context.preferences.use_preferences_save = False
     data = bpy.data.armatures.new("FixtureSkeleton")
     rig = bpy.data.objects.new("FixtureRig", data)
     bpy.context.scene.collection.objects.link(rig)
@@ -104,6 +105,9 @@ def main():
     folder.mkdir(parents=True, exist_ok=True)
     source, expected_bones = fixture(folder)
     scene = bpy.context.scene
+    if hasattr(scene.render.image_settings, "media_type"):
+        scene.render.image_settings.media_type = "VIDEO"
+    preview_media_type = getattr(scene.render.image_settings, "media_type", None)
     state = (scene.render.engine, scene.cycles.device, scene.cycles.samples,
              scene.cycles.use_denoising, scene.camera, scene.world,
              scene.render.resolution_x, scene.render.resolution_y,
@@ -113,6 +117,8 @@ def main():
     preview_report = {"issues": []}
     preview([bpy.data.objects["FixtureBody"]], folder, preview_report)
     assert preview_report["preview_renderer"] == "cycles_cpu", preview_report
+    assert (folder / "preview.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert getattr(scene.render.image_settings, "media_type", None) == preview_media_type
     assert set(bpy.data.objects) == objects
     assert state == (scene.render.engine, scene.cycles.device, scene.cycles.samples,
                      scene.cycles.use_denoising, scene.camera, scene.world,
@@ -529,9 +535,157 @@ def main():
     assert material_backup.use_fake_user
     source_shader = material_backup.node_tree.nodes.get("Principled BSDF")
     assert source_shader and source_shader.inputs["Roughness"].is_linked
+    # A non-reference Basis is a real morph, collision is an authored body
+    # modifier, and source auto-pack must not steal portable output images.
+    source, _ = fixture(folder)
+    body = bpy.data.objects["FixtureBody"]
+    body.data.shape_keys.reference_key.name = "Rest"
+    fitting = body.shape_key_add(name="Basis", from_mix=False)
+    fitting.data[4].co.z += .25
+    fitting.value = .6
+    body.modifiers.new("AuthoredCollision", "COLLISION")
+    bpy.data.use_autopack = True
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    source_bytes = source.read_bytes()
+    repaired = run({"source": str(source), "output": str(folder / "fixture-authored-edge-cases"),
+                    "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert source.read_bytes() == source_bytes
+    assert repaired["status"] == "needs_review", repaired["issues"]
+    assert repaired["selection"]["meshes"] == ["FixtureBody"]
+    assert repaired["integrity"]["source_meshes"]["FixtureBody"] == {"vertices": 8, "triangles": 12}
+    assert not repaired["integrity"]["geometry_errors"]
+    assert not repaired["integrity"]["missing_shape_keys"]
+    rename = next(entry for entry in repaired["shape_key_renames"] if entry["source"] == "Basis")
+    assert rename["export"] == "AF_Basis_Morph", rename
+    shapes = bpy.data.objects["FixtureBody"].data.shape_keys
+    morph = shapes.key_blocks[rename["export"]]
+    assert abs(max((point.co - base.co).length for point, base in zip(morph.data, shapes.reference_key.data)) - .25) < 1e-5
+    fitting_defaults = next(entry for entry in repaired["shape_keys"] if entry["object"] == "FixtureBody")
+    assert abs(fitting_defaults["values"][fitting_defaults["names"].index(rename["export"])] - .6) < 1e-6
+    moved = folder / "autopack portable output – 移动"
+    shutil.copytree(folder / "fixture-authored-edge-cases", moved)
+    bpy.ops.wm.open_mainfile(filepath=str(moved / "model.blend"), use_scripts=False)
+    assert not bpy.data.use_autopack
+    shapes = bpy.data.objects["FixtureBody"].data.shape_keys
+    assert abs(shapes.key_blocks[rename["export"]].value - .6) < 1e-6
+    image = bpy.data.objects["FixtureBody"].data.materials[0].node_tree.nodes.get("Image Texture").image
+    assert not image.packed_file and image.filepath.replace("\\", "/").startswith("//textures/")
+    portable_path = Path(bpy.path.abspath(image.filepath)).resolve()
+    assert portable_path.is_relative_to(moved.resolve()) and portable_path.is_file()
+    image.reload()
+    assert image.size[0] == 64 and len(image.pixels) == 64 * 64 * 4
+    assert all(abs(actual - expected) < .01 for actual, expected in zip(image.pixels[:4], (.3, .5, .7, 1)))
+    # Explicit hidden selection must reach the FBX through hidden/excluded
+    # parent collections; positive names on another mesh cannot prove that.
+    source, _ = fixture(folder)
+    rig = bpy.data.objects["FixtureRig"]
+    parent = bpy.data.collections.new("HiddenParent")
+    child = bpy.data.collections.new("HiddenChild")
+    bpy.context.scene.collection.children.link(parent)
+    parent.children.link(child)
+    parent.hide_viewport = parent.hide_render = True
+    bpy.context.view_layer.layer_collection.children[parent.name].exclude = True
+    data = bpy.data.meshes.new("HiddenPartData")
+    data.from_pydata([(0, 0, 1), (.1, 0, 1), (0, .1, 1)], [], [(0, 1, 2)])
+    part = bpy.data.objects.new("HiddenPart", data)
+    child.objects.link(part)
+    part.parent = rig
+    part.vertex_groups.new(name="Hips").add([0, 1, 2], 1, "REPLACE")
+    part.modifiers.new("Skin", "ARMATURE").object = rig
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    included = run({"source": str(source), "output": str(folder / "fixture-hidden-collection"),
+                    "preset": "preserve", "options": {"include_hidden": True, "preview": False}})
+    assert included["status"] != "blocked", included["issues"]
+    assert set(included["selection"]["meshes"]) == {"FixtureBody", "HiddenPart"}
+    assert not included["integrity"]["geometry_errors"], included["integrity"]
+    assert set(included["integrity"]["export_meshes"]) == {"FixtureBody", "HiddenPart"}
+    assert included["integrity"]["export_meshes"]["HiddenPart"] == {"vertices": 3, "triangles": 1}
+    # Unsupported source appearance must require review even when the named
+    # Principled shader and all named bones/morphs still round-trip correctly.
+    for case in ("disconnected-surface", "subdivision"):
+        source, _ = fixture(folder)
+        rig = bpy.data.objects["FixtureRig"]
+        for bone in rig.pose.bones:
+            for constraint in list(bone.constraints):
+                bone.constraints.remove(constraint)
+        body = bpy.data.objects["FixtureBody"]
+        if case == "disconnected-surface":
+            tree = body.data.materials[0].node_tree
+            output = tree.nodes.get("Material Output")
+            for link in list(output.inputs["Surface"].links):
+                tree.links.remove(link)
+        else:
+            modifier = body.modifiers.new("AuthoredSubdivision", "SUBSURF")
+            modifier.levels = modifier.render_levels = 2
+        bpy.ops.wm.save_as_mainfile(filepath=str(source))
+        reviewed = run({"source": str(source), "output": str(folder / ("fixture-" + case)),
+                       "preset": "preserve", "options": {"preview": False}})
+        assert reviewed["status"] == "needs_review", reviewed["issues"]
+        assert not reviewed["integrity"]["geometry_errors"]
+        if case == "disconnected-surface":
+            assert any(item["severity"] == "warning" and "FixtureSkin" in item["message"] for item in reviewed["issues"])
+        else:
+            assert any(entry["mesh"] == "FixtureBody" and "SUBSURF" in entry["modifiers"] for entry in reviewed["nonportable_modifiers"])
+    # A mask belongs to its object, even when another object shares its source
+    # mesh. Editing the masked copy must retain every unmasked sibling vertex.
+    source, _ = fixture(folder)
+    body = bpy.data.objects["FixtureBody"]
+    sibling = body.copy()
+    sibling.name = "UnmaskedSharedBody"
+    sibling.location.x = .7
+    bpy.context.scene.collection.objects.link(sibling)
+    assert sibling.data == body.data
+    body.vertex_groups.new(name="VisibleMask").add([0, 1, 4, 5], 1, "REPLACE")
+    body.modifiers.new("AuthoredMask", "MASK").vertex_group = "VisibleMask"
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    shared = run({"source": str(source), "output": str(folder / "fixture-shared-mesh-mask"),
+                  "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert shared["status"] != "blocked", shared["issues"]
+    assert not shared["integrity"]["geometry_errors"]
+    assert shared["integrity"]["export_meshes"]["FixtureBody"] == {"vertices": 4, "triangles": 2}
+    assert shared["integrity"]["export_meshes"]["UnmaskedSharedBody"] == {"vertices": 8, "triangles": 12}
+    shapes = bpy.data.objects["UnmaskedSharedBody"].data.shape_keys
+    assert abs(max((point.co - base.co).length for point, base in zip(shapes.key_blocks["Smile"].data, shapes.reference_key.data)) - .03) < 1e-5
+    # Numbered GAME joints have an explicit naming convention. Flattened
+    # weighted branches must regain a portable tree without moving bind bones.
+    source, _ = fixture(folder)
+    rig, body = bpy.data.objects["FixtureRig"], bpy.data.objects["FixtureBody"]
+    game_names = {"Hips": "GAME_C1_hip1", "Spine": "GAME_C1_spine1", "Chest": "GAME_C1_spine2",
+                  "Neck": "GAME_C1_neck1", "Head": "GAME_C1_head1"}
+    for side in ("Left", "Right"):
+        for human, joint in (("Shoulder", "clav1"), ("UpperArm", "arm1"), ("LowerArm", "arm2"),
+                             ("Hand", "arm3"), ("UpperLeg", "leg1"), ("LowerLeg", "leg2"), ("Foot", "leg3")):
+            game_names[side + human] = "GAME_" + side[0] + "1_" + joint
+    for original, name in game_names.items():
+        rig.data.bones[original].name = name
+        group = body.vertex_groups.get(original) or body.vertex_groups.get(name) or body.vertex_groups.new(name=name)
+        group.name = name
+        group.add([0], .01, "ADD")
+    mapped, missing, ambiguous = map_humanoid(list(game_names.values()))
+    assert not missing and not ambiguous, (missing, ambiguous)
+    assert {item["humanName"]: item["boneName"] for item in mapped} == game_names
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    for name in game_names.values():
+        rig.data.edit_bones[name].parent = None
+    bpy.ops.object.mode_set(mode="OBJECT")
+    heads = {bone.name: tuple(bone.head_local) for bone in rig.data.bones}
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    game = run({"source": str(source), "output": str(folder / "fixture-game-joints"),
+                "preset": "preserve", "options": {"preview": False}})
+    assert game["status"] != "blocked", game["issues"]
+    assert not game["missing_required_humanoid"]
+    assert game["generated_hierarchy_repair"]["changes"]
+    assert game["generated_hierarchy_repair"]["rest_matrix_max_delta"] < 1e-5
+    assert not game["integrity"]["missing_bones"] and not game["integrity"]["missing_weighted_bones"]
+    exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
+    assert exported.data.bones[game_names["Hips"]] in exported.data.bones[game_names["LeftFoot"]].parent_recursive
+    assert exported.data.bones[game_names["Chest"]] in exported.data.bones[game_names["RightHand"]].parent_recursive
+    for bone in exported.data.bones:
+        assert max(abs(bone.head_local[index] - heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True}))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+- Retain visible bodies with Collision/Cloth modifiers and explicitly included meshes in hidden collections; verify exported mesh vertex and triangle counts.
+- Preserve real morphs named Basis using a recorded portable name; restore video render settings after PNG previews and save auto-packed sources with portable output texture paths.
+- Keep shared source mesh instances independent when applying authored deletion masks; flag omitted subdivision and unconnected shader surfaces for review.
+- Recognize Source bip_ names and numbered game deformer skeletons; retain Generic prefab/scene previews for incomplete or nonstandard Humanoid rigs.
+- Respect explicit PhysBone deselection and guard missing Animators after SDK component setup.
+- Keep malformed historical receipts from breaking startup; persist current job state and display structured failed-conversion review items.
+- Require saved Unity prefab and preview scene files before reporting completion; expose retry and clear timeout recovery with a 30-minute import limit.
+- Repair moved and damaged portable tools using the same owned-location check as verification, preserving previous bytes.
+- Explain raw FBX versus prepared assets, clip-free avatar exports, Generic rig limits and existing-project imports in the app and workflow guide.
+
 ## 0.2.0
 
 - Native file/folder pickers now close with their app parent, including abrupt exits; they cannot leave orphaned dialogs locking a previous app folder.

@@ -15,3 +15,5 @@ Retain breasts, butt, hair, clothing, tail and other secondary chains and all re
 Routine conversions are deterministic and consume no AI credits. Live Blender or Unity MCP is optional for difficult repairs, enabled only for the relevant project. Preserve original assets, personal editor preferences and existing Unity projects. Never upload or publish an avatar without the user's instruction.
 
 If the MCP is missing, use AvatarForge's **Connect AI** button or `CONNECT-AI.bat`, then reload the client. For clients without MCP, use `START-HERE.bat`; do not invent a connection. This skill folder contains instructions only, not the application or its dependencies.
+
+Unity preparation is a separate stage: use its saved Avatar.prefab or Preview.unity, not a raw FBX drag-and-drop. A kept project without a current saved-asset verdict is incomplete. Avatar exports contain no source animation clips; VRChat drives valid Humanoid rigs. Generic creature previews retain extra limbs but need their own controller setup. See the app's workflow guide.

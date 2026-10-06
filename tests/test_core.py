@@ -100,6 +100,50 @@ class LocalEngineChecks(unittest.TestCase):
             self.assertTrue((Path(job["output"]) / "receipt.json").is_file())
             self.assertEqual(source.read_bytes(), b"fixture")
 
+    def test_snapshot_write_failure_stops_owned_worker_and_keeps_failed_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "fixture.blend"
+            source.write_bytes(b"fixture")
+            popen = subprocess.Popen
+            children = []
+            injected = False
+            jobs = Jobs(root / "outputs")
+            def worker(*args, **kwargs):
+                child = popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+                children.append(child)
+                return child
+            def persist(path, value):
+                nonlocal injected
+                if not injected and Path(path).name == "job.json" and value.get("pid"):
+                    injected = True
+                    raise PermissionError("Injected job snapshot replacement failure")
+                return write_json(path, value)
+            try:
+                with patch("avatarforge.core.discover_tool", return_value=sys.executable), \
+                     patch("avatarforge.core.subprocess.Popen", side_effect=worker), \
+                     patch("avatarforge.core.write_json", side_effect=persist):
+                    job = jobs.start(source)
+                    for thread in jobs.threads:
+                        thread.join(timeout=5)
+                        self.assertFalse(thread.is_alive())
+                    self.assertTrue(injected)
+                    self.assertTrue(children)
+                    self.assertEqual(jobs.get(job["id"])["state"], "failed")
+                    self.assertIn("snapshot replacement failure", jobs.get(job["id"])["error"])
+                    self.assertIsNotNone(children[0].poll())
+                    receipt = read_json(Path(job["output"]) / "receipt.json")
+                    self.assertEqual(receipt["state"], "failed")
+                    jobs.close()
+                    self.assertIsNotNone(children[0].poll())
+                    self.assertEqual(source.read_bytes(), b"fixture")
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.terminate()
+                        child.wait(timeout=5)
+                jobs.close()
+
     def test_receipt_roundtrip_and_sha256(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "receipt.json"
@@ -132,6 +176,40 @@ class LocalEngineChecks(unittest.TestCase):
             self.assertEqual(jobs.get("completed")["state"], "complete")
             self.assertEqual(jobs.get("pending")["state"], "interrupted")
             self.assertIn("previous app session", jobs.get("pending")["error"])
+
+    def test_malformed_history_does_not_disable_healthy_jobs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            for name, contents in (("array", "[]"), ("null", "null"), ("invalid", "{"),
+                                   ("bad-output", json.dumps({"id": "bad-output", "output": None}))):
+                folder = root / name
+                folder.mkdir()
+                (folder / "receipt.json").write_text(contents, encoding="utf-8")
+            healthy = root / "healthy"
+            write_json(healthy / "receipt.json", {"id": "healthy", "output": str(healthy),
+                                                   "state": "complete", "source": "fixture.blend", "preset": "preserve"})
+            jobs = Jobs(root)
+            self.addCleanup(jobs.close)
+            self.assertEqual([job["id"] for job in jobs.list()], ["healthy"])
+
+    def test_malformed_optional_metadata_keeps_failed_conversion_reviewable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            folder = root / "failed"
+            write_json(folder / "receipt.json", {"id": "failed", "output": str(folder),
+                                                  "state": "failed", "source": "fixture.blend", "preset": "preserve"})
+            report = {"status": "blocked", "issues": [{"severity": "error", "message": "fixture failure"}]}
+            write_json(folder / "report.json", report)
+            for name in ("unity-overrides.json", "unity-project.json", "unity-report.json"):
+                (folder / name).write_text("[]", encoding="utf-8")
+            jobs = Jobs(root)
+            self.addCleanup(jobs.close)
+            job = jobs.get("failed")
+            self.assertEqual(job["report"], report)
+            self.assertNotIn("approved_physics", job)
+            self.assertNotIn("unity_project", job)
+            self.assertNotIn("unity_report", job)
+            self.assertEqual(jobs.list()[0]["state"], "failed")
 
     def test_job_receipt_cannot_redirect_output_outside_owned_folder(self):
         with tempfile.TemporaryDirectory() as temp:
