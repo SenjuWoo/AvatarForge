@@ -2,6 +2,8 @@
 
 ## 0.2.1
 
+- Prevent native Unity import stalls on large multi-mesh rigs by removing empty FBX skin clusters; every bone, weighted bind matrix and bind pose remains intact.
+
 - Retain visible bodies with Collision/Cloth modifiers and explicitly included meshes in hidden collections; verify exported mesh vertex and triangle counts.
 - Preserve real morphs named Basis using a recorded portable name; restore video render settings after PNG previews and save auto-packed sources with portable output texture paths.
 - Keep shared source mesh instances independent when applying authored deletion masks; flag omitted subdivision and unconnected shader surfaces for review.

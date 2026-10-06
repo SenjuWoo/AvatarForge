@@ -12,6 +12,7 @@ import atexit
 import logging
 import tempfile
 import zipfile
+import struct
 
 import bpy
 import addon_utils
@@ -1639,6 +1640,36 @@ def preview(meshes, output, report):
             bpy.data.worlds.remove(world)
 
 
+def compact_fbx_skin_clusters(root):
+    """Remove unused mesh/bone skin links; keep every bone node and bind pose.
+
+    Blender writes every armature bone into every skinned mesh. Thousands of
+    empty clusters can stall Unity's FBX importer despite having no weights.
+    Work on Blender's encoded tree so weighted matrices/property bytes stay exact.
+    """
+    objects = next(element for element in root.elems if element.id == b"Objects")
+    empty = {struct.unpack("<q", element.props[0])[0] for element in objects.elems
+             if element.id == b"Deformer" and element.props[2][4:] == b"Cluster"
+             and not any(child.id == b"Indexes" for child in element.elems)}
+    if not empty:
+        return 0
+    objects.elems[:] = [element for element in objects.elems
+                       if not (element.id == b"Deformer" and struct.unpack("<q", element.props[0])[0] in empty)]
+    connections = next(element for element in root.elems if element.id == b"Connections")
+    connections.elems[:] = [element for element in connections.elems
+                           if not (element.id == b"C" and any(struct.unpack("<q", element.props[index])[0] in empty for index in (1, 2)))]
+    definitions = next(element for element in root.elems if element.id == b"Definitions")
+    for element in definitions.elems:
+        if element.id == b"Count":
+            count = element
+        elif element.id == b"ObjectType" and element.props[0][4:] == b"Deformer":
+            count = next(child for child in element.elems if child.id == b"Count")
+        else:
+            continue
+        count.props[0] = struct.pack("<i", struct.unpack("<i", count.props[0])[0] - len(empty))
+    return len(empty)
+
+
 def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report):
     expected_meshes = {mesh.name: {"vertices": len(mesh.data.vertices), "triangles": triangles([mesh])} for mesh in meshes}
     chosen = meshes + ([rig] if rig else [])
@@ -1649,11 +1680,20 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
         obj.select_set(True)
     bpy.context.view_layer.objects.active = rig or meshes[0]
     # Applying modifiers through FBX destroys shape keys. Export original topology explicitly.
-    call("export_scene.fbx", filepath=str(output / "model.fbx"), use_selection=True,
-         object_types={"ARMATURE", "MESH"}, use_mesh_modifiers=False,
-         use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
-         path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
-         apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS", use_custom_props=True)
+    from io_scene_fbx import encode_bin
+    original_write = encode_bin.write
+    def compact_write(path, root, version):
+        report["fbx_empty_skin_clusters_removed"] = compact_fbx_skin_clusters(root)
+        return original_write(path, root, version)
+    encode_bin.write = compact_write
+    try:
+        call("export_scene.fbx", filepath=str(output / "model.fbx"), use_selection=True,
+             object_types={"ARMATURE", "MESH"}, use_mesh_modifiers=False,
+             use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
+             path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
+             apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS", use_custom_props=True)
+    finally:
+        encode_bin.write = original_write
     # Saved conversions must survive moving the app or copying the output folder.
     # FBX has already resolved the absolute PNGs above. The blend stores only
     # images inside this conversion relative to its own directory.

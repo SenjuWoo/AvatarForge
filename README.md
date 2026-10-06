@@ -38,7 +38,7 @@ Supported complex Blender shaders bake automatically on the local CPU. Proven co
 - Imports supported native formats and pinned external importers; detects model candidates instead of executing downloaded SFM rig scripts.
 - Resolves available textures, extracts PNGs, caps texture size by preset and flattens supported UDIM sets with UV metadata.
 - Selects the mesh-linked character armature, exports bind/rest pose and reports nonportable controls, cloth and constraints.
-- Preserves weighted bones, secondary bones and shape keys. It verifies the actual exported FBX by importing it back into Blender, including selected mesh vertex/triangle counts and a check that every expected weighted bone remains weighted.
+- Preserves weighted bones, secondary bones and shape keys. Empty FBX skin binding records are removed without deleting bones or changing weighted matrices. It verifies the actual exported FBX by importing it back into Blender, including selected mesh vertex/triangle counts and a check that every expected weighted bone remains weighted.
 - Captures authored shape-key values before removing source drivers and restores those values on the saved Unity prefab. Supported deletion masks retain every shape frame and an unmasked mesh backup in the saved Blender file.
 - Exports `model.blend`, `model.fbx`, textures, a preview, a conversion manifest and diagnostic logs.
 - Maps common Source/Valve, Blender, MMD and conventional humanoid names, with explicit overrides for ambiguity.

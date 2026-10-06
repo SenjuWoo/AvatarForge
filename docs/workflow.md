@@ -30,6 +30,10 @@ A real morph named Basis is renamed AF_Basis_Morph in the conversion copy becaus
 - **Unity prefab & scene prepared:** the current import verdict references actual saved assets. Open the project to review them.
 - **Project kept / timed out:** Unity has no completed asset verdict. Open the kept project, wait for asset imports, then run AvatarForge → Import conversion folder. A new-project retry keeps earlier diagnostic projects intact.
 
+Earlier conversions keep their existing FBX bytes. Convert the source again with the current release to apply exporter fixes; preparing an old conversion does not rebuild its FBX.
+
+Empty per-mesh skin binding records are removed before export verification. Bone transforms, weighted bind matrices and bind poses remain; this avoids native Unity FBX stalls on large multi-mesh rigs.
+
 First Unity imports compile the SDK and build an asset cache. Large generated rigs can take substantially longer than simple models; automated preparation has a 30-minute limit. The Unity log identifies the last importing asset. Extra retained bones may also exceed VRChat performance budgets; preservation is not permission to silently discard them.
 
 Texture baking approximates supported Blender shaders. Missing source images, ambiguous UDIM tiles, degenerate UVs and unconnected shader surfaces require repair rather than invented texture data. Inspect the prepared Unity material, not the default material Unity creates from a raw FBX. Original material graphs and source-image backups are kept in the converted Blender file.

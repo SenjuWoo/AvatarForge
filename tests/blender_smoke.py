@@ -683,9 +683,54 @@ def main():
     assert exported.data.bones[game_names["Chest"]] in exported.data.bones[game_names["RightHand"]].parent_recursive
     for bone in exported.data.bones:
         assert max(abs(bone.head_local[index] - heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
+    # Sparse skins must not bind every unused jiggle/control bone into every
+    # mesh. Keep all transforms and exact weighted bindings/morphs instead.
+    from io_scene_fbx import parse_fbx, encode_bin
+    source, _ = fixture(folder)
+    rig, body = bpy.data.objects["FixtureRig"], bpy.data.objects["FixtureBody"]
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    for index in range(96):
+        bone = rig.data.edit_bones.new("Unweighted_Extra_" + str(index))
+        bone.head, bone.tail = (0, index * .001, 1), (0, index * .001, 1.1)
+        bone.parent = rig.data.edit_bones["Hips"]
+    bpy.ops.object.mode_set(mode="OBJECT")
+    sibling = body.copy()
+    sibling.data = body.data.copy()
+    sibling.name = "SparseSkinSibling"
+    sibling.location.x = .7
+    bpy.context.scene.collection.objects.link(sibling)
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    original_writer = encode_bin.write
+    sparse = run({"source": str(source), "output": str(folder / "fixture-sparse-skin"),
+                  "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert encode_bin.write is original_writer
+    assert sparse["status"] != "blocked", sparse["issues"]
+    assert sparse["fbx_empty_skin_clusters_removed"] == (len(sparse["export_bones"]) - 3) * 2
+    assert not sparse["integrity"]["missing_bones"] and not sparse["integrity"]["missing_weighted_bones"]
+    assert not sparse["integrity"]["missing_shape_keys"] and not sparse["integrity"]["geometry_errors"]
+    tree, _ = parse_fbx.parse(str(folder / "fixture-sparse-skin" / "model.fbx"))
+    objects = next(element for element in tree.elems if element.id == b"Objects")
+    clusters = [element for element in objects.elems if element.id == b"Deformer" and element.props[2] == b"Cluster"]
+    assert len(clusters) == 6
+    assert all(len(next(child for child in element.elems if child.id == b"Indexes").props[0]) == 8 for element in clusters)
+    models = [element for element in objects.elems if element.id == b"Model" and element.props[2] == b"LimbNode"]
+    assert len(models) == len(sparse["export_bones"])
+    exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
+    for index in range(96):
+        bone = exported.data.bones["Unweighted_Extra_" + str(index)]
+        assert max(abs(actual - expected) for actual, expected in zip(bone.head_local, (0, index * .001, 1))) < 1e-4
+    for mesh_name in ("FixtureBody", "SparseSkinSibling"):
+        mesh = bpy.data.objects[mesh_name]
+        shapes = mesh.data.shape_keys
+        assert abs(max((point.co - base.co).length for point, base in zip(shapes.key_blocks["Smile"].data, shapes.reference_key.data)) - .03) < 1e-5
+        for vertex in mesh.data.vertices:
+            weights = {mesh.vertex_groups[group.group].name: group.weight for group in vertex.groups}
+            assert abs(weights["Hips"] - .6) < 1e-5
+            assert abs(weights["Breast.L"] - .2) < 1e-5 and abs(weights["Butt.L"] - .2) < 1e-5
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "sparse_skin_cluster_bone_weight_morph_retention": True}))
 
 
 if __name__ == "__main__":
