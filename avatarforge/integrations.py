@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 
-from .core import ROOT
+from .core import ROOT, local_path
 
 NAME = "avatarforge"
 MARKER = "AVATARFORGE_MANAGED"
@@ -267,7 +267,7 @@ def client_path(client, home=None, appdata=None, project=None):
     home = Path(home or Path.home())
     appdata = Path(appdata or os.environ.get("APPDATA", home / ".config"))
     if project:
-        return Path(project).resolve() / PROJECT_FILES[client] if client in PROJECT_FILES else None
+        return Path(local_path(project)) / PROJECT_FILES[client] if client in PROJECT_FILES else None
     location = CLIENTS[client][3]
     if client == "codex" and home == Path.home() and os.environ.get("CODEX_HOME"):
         return Path(os.environ["CODEX_HOME"]) / "config.toml"
@@ -299,7 +299,7 @@ def clients(home=None, appdata=None, project=None):
 def _skill_plan(client, root=ROOT, home=None, project=None, appdata=None):
     if client not in SKILL_FOLDERS:
         return None
-    base = Path(project or home or Path.home())
+    base = Path(local_path(project)) if project else Path(home or Path.home())
     destination = base / SKILL_FOLDERS[client] / "SKILL.md"
     if client == "hermes":
         destination = client_path(client, home, appdata).parent / "skills/avatarforge/SKILL.md"

@@ -16,6 +16,32 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 FORMATS = {".blend", ".fbx", ".glb", ".gltf", ".obj", ".mdl", ".vmdl_c", ".smd", ".dmx", ".pmx", ".pmd", ".vrm", ".xps", ".mesh", ".ascii", ".dae", ".stl", ".ply"}
+
+
+def local_path(value, root=None):
+    """Absolute local path. With root, the path must stay inside that folder.
+
+    Filesystem calls use only the returned string, after the prefix check.
+    """
+    if not isinstance(value, (str, os.PathLike)):
+        raise ValueError("path must be a string")
+    text = os.fspath(value)
+    if "\x00" in text:
+        raise ValueError("path contains a null byte")
+    absolute = os.path.abspath(os.path.expanduser(text))
+    if root is None:
+        drive, _rest = os.path.splitdrive(absolute)
+        prefix = (drive + os.sep) if drive else os.sep
+        allowed_exact = prefix.rstrip(os.sep)
+        message = "path must be a local absolute path"
+    else:
+        base = os.path.abspath(os.path.expanduser(os.fspath(root)))
+        prefix = base if base.endswith(os.sep) else base + os.sep
+        allowed_exact = base
+        message = "path escapes the allowed folder"
+    if absolute != allowed_exact and not absolute.startswith(prefix):
+        raise ValueError(message)
+    return absolute
 PRESETS = {
     "preserve": {"label": "Preserve", "description": "Skip polygon reduction and texture downscaling. Keep the authored outfit state."},
     "balanced": {"label": "PC balanced", "description": "2K texture cap and safe mesh reduction. Keeps shape keys and secondary bones."},
@@ -132,7 +158,7 @@ def discover_tool(name, explicit=None):
         candidates = [explicit]
     for item in candidates:
         if item:
-            path = Path(item).expanduser()
+            path = Path(local_path(item))
             if path.is_file() and path.suffix.lower() not in {".bat", ".cmd", ".ps1"}:
                 if name == "unity" and os.name == "nt" and unity_version(path) != UNITY_VERSION:
                     continue
@@ -180,7 +206,7 @@ def doctor():
 
 
 def scan(source):
-    path = Path(source).expanduser().resolve()
+    path = Path(local_path(source))
     if not path.exists():
         raise ValueError("That model or folder does not exist.")
     if path.is_file():
@@ -198,13 +224,17 @@ def scan(source):
 
 def extract_zip(source, destination, max_bytes=8 * 1024 ** 3, max_files=50000):
     """Extract only regular files inside a new owned folder, including Windows paths."""
-    destination = Path(destination).resolve()
+    destination = Path(local_path(destination))
     destination.mkdir(parents=True, exist_ok=False)
+    dest_prefix = os.fspath(destination)
+    if not dest_prefix.endswith(os.sep):
+        dest_prefix += os.sep
     with zipfile.ZipFile(source) as archive:
         infos = archive.infolist()
         if len(infos) > max_files or sum(i.file_size for i in infos) > max_bytes:
             raise ValueError("Archive exceeds the 50,000 file / 8 GiB extraction limit.")
         seen = set()
+        planned = []
         reserved = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)}
         for info in infos:
             name = info.filename.replace("\\", "/")
@@ -217,10 +247,19 @@ def extract_zip(source, destination, max_bytes=8 * 1024 ** 3, max_files=50000):
             if key in seen and not info.is_dir():
                 raise ValueError("Archive contains duplicate file paths.")
             seen.add(key)
-            target = (destination / name).resolve()
-            if not target.is_relative_to(destination):
+            target_text = os.path.abspath(os.path.join(dest_prefix, name))
+            if not target_text.startswith(dest_prefix):
                 raise ValueError("Archive path leaves extraction folder.")
-        archive.extractall(destination)
+            planned.append((info, target_text))
+        for info, target_text in planned:
+            if not target_text.startswith(dest_prefix):
+                raise ValueError("Archive path leaves extraction folder.")
+            if info.is_dir():
+                os.makedirs(target_text, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target_text), exist_ok=True)
+            with open(target_text, "wb") as handle:
+                handle.write(archive.read(info))
     return scan(destination)
 
 
@@ -265,7 +304,7 @@ class Jobs:
             raise ValueError("The conversion service is closing.")
         if preset not in PRESETS:
             raise ValueError("Unknown optimization preset.")
-        source = Path(source).expanduser().resolve()
+        source = Path(local_path(source))
         if not source.is_file() or source.suffix.lower() not in FORMATS:
             raise ValueError("Choose one supported model file before converting.")
         executable = discover_tool("blender", blender)
@@ -283,7 +322,7 @@ class Jobs:
         if preset == "preserve" and "target_triangles" in options:
             raise ValueError("Choose PC balanced or Mobile candidate to set a triangle target. Preserve keeps the original geometry.")
         extra_addons = options.get("addon_paths", [])
-        if not isinstance(extra_addons, list) or any(not isinstance(p, str) or not Path(p).expanduser().is_dir() for p in extra_addons):
+        if not isinstance(extra_addons, list) or any(not isinstance(p, str) or not Path(local_path(p)).is_dir() for p in extra_addons):
             raise ValueError("addon_paths must contain existing local addon folders.")
         job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         output = self.output_root / job_id
@@ -292,7 +331,7 @@ class Jobs:
         output.mkdir(parents=True, exist_ok=False)
         job = {"id": job_id, "source": str(source), "output": str(output), "output_relative": job_id,
                "app_root": str(ROOT), "preset": preset, "options": options,
-               "addon_paths": [str(ROOT / ".runtime" / "addons")] + [str(Path(p).expanduser().resolve()) for p in extra_addons], "state": "queued", "started": time.time(), "log": "", "blender": executable}
+               "addon_paths": [str(ROOT / ".runtime" / "addons")] + [local_path(p) for p in extra_addons], "state": "queued", "started": time.time(), "log": "", "blender": executable}
         write_json(output / "job.json", job)
         with self.lock:
             self.jobs[job_id] = job
@@ -434,7 +473,7 @@ def prepare_unity(input_folder, project=None):
             raise ValueError("Official VPM is not installed. Use Install tools > Unity project tools, or import the output with the included Unity package.")
         vpm = Path(command)
     # Keep SDK cache/resource paths short on Windows. Each explicit action creates a new project.
-    destination = Path(project).expanduser().resolve() if project else Path(os.environ.get("USERPROFILE", str(folder))) / "AvatarForgeProjects" / folder.name[-8:]
+    destination = Path(local_path(project)) if project else Path(os.environ.get("USERPROFILE", str(folder))) / "AvatarForgeProjects" / folder.name[-8:]
     if destination.exists():
         if project:
             raise ValueError("Unity destination already exists. Choose a new project folder; existing projects are never overwritten.")

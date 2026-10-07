@@ -10,7 +10,7 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from avatarforge.core import ROOT, scan, extract_zip, Jobs, sha256, read_json, write_json
+from avatarforge.core import ROOT, scan, extract_zip, Jobs, sha256, read_json, write_json, local_path
 from avatarforge.app import compact_job
 from avatarforge.bone_aliases import map_humanoid
 
@@ -65,6 +65,18 @@ class LocalEngineChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 extract_zip(archive, root / "extract", max_bytes=3)
             self.assertFalse((root / "extract" / "character.fbx").exists())
+
+    def test_local_path_rejects_null_bytes_and_folder_escape(self):
+        with self.assertRaises(ValueError):
+            local_path("model\x00.fbx")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            inside = root / "model.fbx"
+            inside.write_bytes(b"fixture")
+            self.assertTrue(Path(local_path(inside, root=root)).samefile(inside))
+            outside = root.parent / "outside.fbx"
+            with self.assertRaises(ValueError):
+                local_path(outside, root=root)
 
     def test_archive_rejects_case_collisions_and_windows_devices(self):
         with tempfile.TemporaryDirectory() as temp:
