@@ -67,6 +67,7 @@ def fixture(folder):
     mesh = bpy.data.objects.new("FixtureBody", mesh_data)
     bpy.context.scene.collection.objects.link(mesh)
     mesh.parent = rig
+    mesh.hide_select = True
     modifier = mesh.modifiers.new("Skin", "ARMATURE")
     modifier.object = rig
     mesh.vertex_groups.new(name="Hips").add(list(range(8)), .6, "REPLACE")
@@ -95,6 +96,9 @@ def fixture(folder):
     shader.inputs["Base Color"].default_value = (.8, .8, .8, 1)
     material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
     mesh_data.materials.append(material)
+    # Blender 5.2 FBX export crashes when a length-3 custom property contains ints.
+    rig["avatarforge_int_vector"] = [1, 0, 0]
+    rig.pose.bones["Hips"]["avatarforge_pose_int_vector"] = [2, 0, 0]
     source = folder / "fixture.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(source))
     return source, {name for name, *_ in definitions if name != "CTRL_Unused"}
@@ -218,6 +222,12 @@ def main():
     assert any(item["code"] == "preserve_target_ignored" for item in report["issues"])
     assert report["status"] == "needs_review", report["issues"]
     assert report["integrity"]["fbx_roundtrip_verified"]
+    imported_rig = bpy.data.objects["FixtureRig"]
+    vector = [float(item) for item in imported_rig["avatarforge_int_vector"]]
+    pose_vector = [float(item) for item in imported_rig.pose.bones["Hips"]["avatarforge_pose_int_vector"]]
+    assert vector == [1.0, 0.0, 0.0], vector
+    assert pose_vector == [2.0, 0.0, 0.0], pose_vector
+    assert any(item["code"] == "custom_property_vectors" and item["severity"] == "info" for item in report["issues"])
     assert set(report["integrity"]["export_bones"]) == expected_bones
     assert not report["integrity"]["missing_bones"]
     assert not report["integrity"]["missing_shape_keys"]
@@ -957,7 +967,7 @@ def main():
     accessory_parts(folder)
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True, "integer_vector_custom_properties": True, "unselectable_mesh_exported": True}))
 
 
 if __name__ == "__main__":

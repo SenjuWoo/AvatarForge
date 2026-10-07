@@ -369,7 +369,7 @@ def choose_objects(options, report):
                 reveal(child)
     reveal(bpy.context.view_layer.layer_collection)
     for obj in chosen:
-        obj.hide_viewport = obj.hide_render = False
+        obj.hide_viewport = obj.hide_render = obj.hide_select = False
         obj.hide_set(False)
     return rig, meshes
 
@@ -2336,6 +2336,78 @@ def compact_fbx_skin_clusters(root):
     return len(empty)
 
 
+def _fbx_float(value):
+    """Value Blender's FBX writer can pass to add_float64, or None."""
+    if isinstance(value, float):
+        return value
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int):
+        return float(value)
+    item = getattr(value, "item", None)
+    if not callable(item):
+        return None
+    try:
+        number = item()
+    except Exception:
+        return None
+    if isinstance(number, bool) or not isinstance(number, (int, float)):
+        return None
+    return float(number)
+
+
+def coerce_fbx_custom_vectors(owners):
+    """Make 3-item custom properties legal FBX vectors.
+
+    Blender 5.2 writes a length-3 to_list() property with add_float64, which
+    rejects ints. DAZ rotation and location locks are integer arrays on pose
+    bones and abort the whole export. Numeric components become Python floats.
+    A non-numeric triple is stored as text, which the exporter already accepts.
+    """
+    converted = 0
+    replaced = 0
+    seen = set()
+    for owner in owners:
+        if owner is None or id(owner) in seen:
+            continue
+        seen.add(id(owner))
+        try:
+            items = list(owner.items())
+            rna = {prop.identifier for prop in owner.bl_rna.properties if prop.is_runtime}
+        except Exception:
+            continue
+        for key, value in items:
+            if not isinstance(key, str) or key in rna:
+                continue
+            listed = getattr(value, "to_list", lambda: None)()
+            if not listed or len(listed) != 3 or all(isinstance(item, float) for item in listed):
+                continue
+            floats = [_fbx_float(item) for item in listed]
+            if any(item is None for item in floats):
+                owner[key] = str(listed)
+                replaced += 1
+            else:
+                owner[key] = floats
+                converted += 1
+    return converted, replaced
+
+
+def custom_property_owners(objects):
+    """IDs whose custom properties Blender's FBX exporter writes for this selection."""
+    owners = []
+    for obj in objects:
+        owners.append(obj)
+        data = getattr(obj, "data", None)
+        if data is not None:
+            owners.append(data)
+        if getattr(obj, "type", None) == "ARMATURE":
+            owners.extend(obj.data.bones)
+            owners.extend(obj.pose.bones)
+        if getattr(obj, "type", None) == "MESH":
+            owners.extend(slot.material for slot in obj.material_slots if slot.material is not None)
+    return owners
+
+
 def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report, extra_rigs=None):
     expected_meshes = {mesh.name: {"vertices": len(mesh.data.vertices), "triangles": triangles([mesh])} for mesh in meshes}
     extra_rigs = [item for item in (extra_rigs or []) if item]
@@ -2345,6 +2417,8 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
     for obj in chosen:
         obj.hide_set(False)
         obj.hide_viewport = False
+        # DAZ and other sources mark some real meshes unselectable. select_set then does nothing.
+        obj.hide_select = False
         obj.select_set(True)
     bpy.context.view_layer.objects.active = rig or meshes[0]
     # Applying modifiers through FBX destroys shape keys. Export original topology explicitly.
@@ -2354,12 +2428,25 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
         report["fbx_empty_skin_clusters_removed"] = compact_fbx_skin_clusters(root)
         return original_write(path, root, version)
     encode_bin.write = compact_write
+    converted, replaced = coerce_fbx_custom_vectors(custom_property_owners(chosen))
+    if converted:
+        issue(report, "info", "custom_property_vectors", "Converted " + str(converted) + " integer or other non-float vector custom properties to plain floats so FBX export can write them.")
+    if replaced:
+        issue(report, "warning", "custom_property_vectors", "Stored " + str(replaced) + " non-numeric vector custom properties as text so FBX export can continue.")
+    export_arguments = dict(filepath=str(output / "model.fbx"), use_selection=True,
+                            object_types={"ARMATURE", "MESH"}, use_mesh_modifiers=False,
+                            use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
+                            path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
+                            apply_unit_scale=True, apply_scale_options="FBX_SCALE_NONE", use_custom_props=True)
     try:
-        call("export_scene.fbx", filepath=str(output / "model.fbx"), use_selection=True,
-             object_types={"ARMATURE", "MESH"}, use_mesh_modifiers=False,
-             use_armature_deform_only=False, add_leaf_bones=False, bake_anim=False,
-             path_mode="COPY", embed_textures=False, axis_forward="-Z", axis_up="Y",
-             apply_unit_scale=True, apply_scale_options="FBX_SCALE_NONE", use_custom_props=True)
+        try:
+            call("export_scene.fbx", **export_arguments)
+        except RuntimeError as exc:
+            if "add_float64" not in str(exc):
+                raise
+            export_arguments["use_custom_props"] = False
+            issue(report, "warning", "custom_properties_omitted", "FBX export omitted custom properties because one was still not a type Blender can encode as a vector.")
+            call("export_scene.fbx", **export_arguments)
     finally:
         encode_bin.write = original_write
     # Saved conversions must survive moving the app or copying the output folder.

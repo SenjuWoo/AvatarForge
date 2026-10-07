@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6
+
+- Convert integer and other non-float 3-item custom properties to plain floats before FBX export. DAZ rotation and location lock arrays use that shape and were aborting Blender 5.2. A vector that still cannot be encoded is omitted and the export continues.
+- Export meshes marked unselectable in the source. A selection-based FBX export was dropping those meshes, including DAZ eye meshes.
+
 ## 0.2.5
 
 - Map humanoid joints from XPS/XNALara word order, ValveBiped and Maya `lf`/`rt` tokens, sided hip bones, and Blender `.001` duplicates. Twist, armor and finger helpers no longer tie with the real joint.
