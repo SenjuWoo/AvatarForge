@@ -159,11 +159,12 @@ def map_humanoid(bones, overrides=None, preferred=None):
                 score = (0.91 if generated else 0.97) - aliases.index(base) * .001 - penalty
                 suffix = re.search(r"\.(\d+)$", name)
                 suffix_rank = -int(suffix.group(1)) if suffix else 0
-                # Equal scores prefer the deform bone, then .001 over later duplicates.
-                candidates.append(((name in preferred, name in preferred and name.startswith("DEF-"), score, name.startswith("DEF-"), suffix_rank, -len(name)), name))
+                # Weighted or deform bones win first. Score includes the armor/outfit/weapon
+                # penalty, so a DEF armor bone cannot outrank the real joint. DEF- breaks ties.
+                candidates.append(((name in preferred, score, name.startswith("DEF-"), suffix_rank, -len(name)), name))
         candidates.sort(reverse=True)
         if candidates and (len(candidates) == 1 or candidates[0][0] > candidates[1][0]):
-            score = candidates[0][0][2]
+            score = candidates[0][0][1]
             name = candidates[0][1]
             result.append({"humanName": human, "boneName": name, "confidence": score})
             used.add(name)

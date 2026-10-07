@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.7
+
+- Rank the weighted joint above a deform bone whose name says armor, outfit, or weapon. A preferred DEF- armor thigh was winning the upper-leg slot and skipping generated-hierarchy repair, so Unity rejected the Humanoid T-pose.
+
 ## 0.2.6
 
 - Convert integer and other non-float 3-item custom properties to plain floats before FBX export. DAZ rotation and location lock arrays use that shape and were aborting Blender 5.2. A vector that still cannot be encoded is omitted and the export continues.

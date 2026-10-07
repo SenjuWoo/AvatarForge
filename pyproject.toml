@@ -1,6 +1,6 @@
 [project]
 name = "avatarforge-aio"
-version = "0.2.6"
+version = "0.2.7"
 description = "Local Blender, XNALara, MMD, VRM, and Source/SFM to Unity/VRChat avatar workbench"
 requires-python = ">=3.10"
 license = {text = "MIT"}
