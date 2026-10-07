@@ -83,7 +83,7 @@ def _anatomical_base(words):
 
 
 def normalize(name):
-    """Return anatomical name, side, generated-prefix flag and extra score penalty."""
+    """Return anatomical name, side, generated-prefix flag, score penalty, and junk flag."""
     original = name.casefold()
     name = original
     # Numbered game deformers encode side and joint order explicitly. Do not
@@ -95,7 +95,7 @@ def normalize(name):
         anatomy = {"hip1": "hips", "spine1": "spine", "spine2": "chest", "spine3": "upperchest",
                    "clav1": "shoulder", "arm1": "upperarm", "arm2": "lowerarm", "arm3": "hand",
                    "leg1": "upperleg", "leg2": "lowerleg", "leg3": "foot", "leg4": "toes"}
-        return anatomy.get(joint, joint), side, False, 0.0
+        return anatomy.get(joint, joint), side, False, 0.0, False
     generated = bool(re.match(r"^(?:def|org|mch|ctrl|ik|fk|dsp|root)[-_]", name))
     name = re.sub(r"^(?:def|org|mch|ctrl|ik|fk|dsp|root)[-_]", "", name)
     name = re.sub(r"^(?:mixamorig[:_]?|valvebiped[._]?bip0?[12][._]?|bip0?[12][._]?|bip[._])", "", name)
@@ -133,7 +133,7 @@ def normalize(name):
     base = _anatomical_base(words)
     if not base:
         base = re.sub(r"[^\w]", "", name).replace("_", "")
-    return base, side, generated, penalty
+    return base, side, generated, penalty, junk_penalty > 0
 
 
 def map_humanoid(bones, overrides=None, preferred=None):
@@ -153,18 +153,21 @@ def map_humanoid(bones, overrides=None, preferred=None):
         side = "Left" if human.startswith("Left") else "Right" if human.startswith("Right") else None
         candidates = []
         for name in bones:
-            base, found_side, generated, penalty = normalize(name)
+            base, found_side, generated, penalty, junk = normalize(name)
             if found_side == side and base in aliases and name not in used:
                 # Anatomical alias order settles spine/spine1 and forearm/elbow naming collisions.
                 score = (0.91 if generated else 0.97) - aliases.index(base) * .001 - penalty
                 suffix = re.search(r"\.(\d+)$", name)
                 suffix_rank = -int(suffix.group(1)) if suffix else 0
-                # Weighted or deform bones win first. Score includes the armor/outfit/weapon
-                # penalty, so a DEF armor bone cannot outrank the real joint. DEF- breaks ties.
-                candidates.append(((name in preferred, score, name.startswith("DEF-"), suffix_rank, -len(name)), name))
+                # Preferred bones win. Among them, a junk name loses before the DEF
+                # tie-break, so DEF-Thigh_Armor cannot outrank the real joint. DEF still
+                # beats a clean control. Without a preferred set, score picks the control
+                # name so hierarchy repair can parent that control under the deformer.
+                chosen = name in preferred
+                candidates.append(((chosen, not junk, chosen and name.startswith("DEF-"), score, name.startswith("DEF-"), suffix_rank, -len(name)), name))
         candidates.sort(reverse=True)
         if candidates and (len(candidates) == 1 or candidates[0][0] > candidates[1][0]):
-            score = candidates[0][0][1]
+            score = candidates[0][0][3]
             name = candidates[0][1]
             result.append({"humanName": human, "boneName": name, "confidence": score})
             used.add(name)

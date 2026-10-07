@@ -361,6 +361,32 @@ class HumanoidAliasChecks(unittest.TestCase):
         self.assertEqual(got["LeftLowerLeg"], "GAME_L1_LEG2")
         self.assertEqual(got["RightLowerLeg"], "GAME_R1_LEG2")
 
+    def test_clean_def_joint_beats_a_weighted_elbow_control(self):
+        bones = ["Hips", "Spine", "Head",
+                 "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+                 "RightUpperLeg", "RightLowerLeg", "RightFoot",
+                 "LeftUpperArm", "LeftLowerArm", "LeftHand",
+                 "RightUpperArm", "RightLowerArm", "RightHand",
+                 "DEF-Hips", "DEF-Spine", "DEF-Chest", "DEF-Head",
+                 "Chest",
+                 "DEF-LeftUpperLeg_1", "DEF-LeftLowerLeg_1", "DEF-LeftFoot",
+                 "DEF-RightUpperLeg_1", "DEF-RightLowerLeg_1", "DEF-RightFoot",
+                 "DEF-LeftUpperArm_1", "DEF-LeftLowerArm_1", "DEF-LeftHand",
+                 "DEF-RightUpperArm_1", "DEF-RightLowerArm_1", "DEF-RightHand",
+                 "Elbow.L"]
+        preferred = [bone for bone in bones if bone.startswith("DEF-") or bone == "Elbow.L"]
+        got, missing, ambiguous = self.names(bones, preferred)
+        self.assertEqual(missing, [])
+        self.assertEqual(ambiguous, [])
+        self.assertEqual(got["LeftLowerArm"], "DEF-LeftLowerArm_1")
+        self.assertEqual(got["Chest"], "DEF-Chest")
+        self.assertTrue(all(name.startswith("DEF-") for name in got.values()))
+        plain, _, plain_ambiguous = self.names(bones)
+        self.assertEqual(plain_ambiguous, [])
+        self.assertEqual(plain["Chest"], "Chest")
+        self.assertEqual(plain["LeftLowerArm"], "LeftLowerArm")
+        self.assertEqual(plain["Hips"], "Hips")
+
 
 if __name__ == "__main__":
     unittest.main()
