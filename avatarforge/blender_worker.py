@@ -683,8 +683,26 @@ def align_vrchat_spine(rig, options, report):
     bpy.context.view_layer.objects.active = rig
     bpy.ops.object.mode_set(mode="EDIT")
     bones = rig.data.edit_bones
-    snapshots = {bone.name: (bone.matrix.copy(), bone.length) for bone in bones}
+    # Head, tail and roll are armature-space. Restoring the matrix after a parent
+    # change drifts on some rigs and used to abort the whole export.
+    snapshots = {bone.name: (bone.head.copy(), bone.tail.copy(), bone.roll) for bone in bones}
+    parents_before = {bone.name: bone.parent.name if bone.parent else None for bone in bones}
     torso = bones[by_human[torso_slot]]
+
+    def restore_bind():
+        for bone in bones:
+            head, tail, roll = snapshots[bone.name]
+            bone.head, bone.tail, bone.roll = head, tail, roll
+
+    def bind_delta():
+        worst, worst_name = 0.0, ""
+        for bone in bones:
+            head, tail, roll = snapshots[bone.name]
+            delta = max((bone.head - head).length, (bone.tail - tail).length, abs(bone.roll - roll))
+            if delta > worst:
+                worst, worst_name = delta, bone.name
+        return worst, worst_name
+
     changes = []
     try:
         for human in slots:
@@ -697,14 +715,22 @@ def align_vrchat_spine(rig, options, report):
             old = bone.parent.name if bone.parent else None
             bone.use_connect = False
             bone.parent = torso
-            matrix, length = snapshots[bone.name]
-            bone.matrix, bone.length = matrix, length
+            restore_bind()
             changes.append({"bone": bone.name, "human": human, "old_parent": old, "parent": torso.name})
-        delta = max((abs(bone.matrix[row][column] - snapshots[bone.name][0][row][column])
-                     for bone in bones for row in range(4) for column in range(4)), default=0)
+        delta, drifted = bind_delta()
         if delta > 1e-5:
-            raise CapabilityError("VRChat spine parent repair changed bind/rest matrices.")
-        if changes:
+            for bone in bones:
+                bone.use_connect = False
+                bone.parent = None
+            for name, parent_name in parents_before.items():
+                if parent_name and parent_name in bones:
+                    bones[name].parent = bones[parent_name]
+            restore_bind()
+            issue(report, "warning", "vrchat_spine_hierarchy",
+                  "Spine parent repair would move " + drifted + " by " + format(delta, ".6g")
+                  + ". The original parents were kept so the export can continue. VRChat still wants the neck and both shoulders parented directly to " + torso_slot + ".")
+            changes = []
+        elif changes:
             report["vrchat_spine_repair"] = {"torso_slot": torso_slot, "torso": torso.name, "changes": changes, "rest_matrix_max_delta": delta}
             moved = ", ".join(item["human"] + " from " + str(item["old_parent"]) for item in changes)
             issue(report, "warning", "vrchat_spine_parent_repaired", "Parented " + moved + " directly to " + torso_slot + " (" + torso.name + ") so the VRChat spine check can pass. Bind positions were kept, and intermediate spine bones remain for secondary deformation.")
@@ -1196,10 +1222,11 @@ def bake_materials(meshes, materials, size, report):
         if any(mesh in unavailable_source_uv for mesh in bound):
             issue(report, "warning", "material_bake_skipped", material.name + ": all eight UV channels are already occupied; source graph retained to preserve named UV dependencies.")
             continue
-        if not bound or any(not mesh.data.uv_layers for mesh in bound):
+        if not bound or not any(mesh.data.uv_layers for mesh in bound):
             issue(report, "warning", "material_bake_skipped", material.name + ": no usable UV map.")
             continue
-        if any(not material_uv_has_area(mesh, material) for mesh in bound):
+        # One unused slot on a shared material must not drop the meshes that have real UV area.
+        if not any(material_uv_has_area(mesh, material) for mesh in bound):
             issue(report, "warning", "material_bake_skipped", material.name + ": UVs are degenerate or its material has no UV-covered faces; source shader retained.")
             continue
         target = tree.nodes.new("ShaderNodeTexImage")
@@ -1215,14 +1242,14 @@ def bake_materials(meshes, materials, size, report):
         return
     bake_meshes = []
     for mesh in meshes:
-        if not any(material in eligible for material in mesh.data.materials if material):
+        used = [material for material in mesh.data.materials if material]
+        if not any(material in eligible for material in used):
             continue
-        if any(material and material not in eligible for material in mesh.data.materials):
-            issue(report, "warning", "material_bake_slots", mesh.name + ": unsupported material slot; source material retained.")
-            for material in mesh.data.materials:
-                if material in baked:
-                    baked[material]["incomplete"] = True
+        if not mesh.data.uv_layers:
             continue
+        unsupported = [material.name for material in used if material not in eligible]
+        if unsupported:
+            issue(report, "warning", "material_bake_slots", mesh.name + ": unsupported material slot kept from the source: " + ", ".join(dict.fromkeys(unsupported)))
         bake_meshes.append(mesh)
     if not bake_meshes:
         return
@@ -1308,6 +1335,21 @@ def bake_materials(meshes, materials, size, report):
     channels = (("base_color", "Base Color"), ("normal", None), ("roughness", "Roughness"),
                 ("metallic", "Metallic"), ("alpha", "Alpha"), ("emission", None))
     in_progress = None
+    # Blender bakes every selected material into its active image. Park unsupported
+    # slots on a throwaway image so a shared mesh can still bake the slots that work.
+    shields = []
+    shielded = set()
+    for mesh in bake_meshes:
+        for material in mesh.data.materials:
+            if not material or material in eligible or material in shielded or not material.node_tree:
+                continue
+            shielded.add(material)
+            image = bpy.data.images.new("AF_BakeShield_" + material.name, width=4, height=4, alpha=True)
+            node = material.node_tree.nodes.new("ShaderNodeTexImage")
+            node.image = image
+            node.label = "AvatarForge bake shield"
+            material.node_tree.nodes.active = node
+            shields.append((material, node, image))
     try:
         for channel, input_name in channels:
             saved_links, emissions = {}, {}
@@ -1431,6 +1473,10 @@ def bake_materials(meshes, materials, size, report):
             materials[materials.index(damaged)] = saved
         issue(report, "warning", "material_bake_failed", "Baking stopped: " + str(exc) + ". Inspect partial baked results; incomplete material graphs use their source fallback.")
     finally:
+        for material, node, image in shields:
+            if node.name in material.node_tree.nodes:
+                material.node_tree.nodes.remove(node)
+            bpy.data.images.remove(image)
         scene.render.engine, scene.cycles.samples = engine, samples
         for modifier, render, viewport in visibility:
             modifier.show_render, modifier.show_viewport = render, viewport

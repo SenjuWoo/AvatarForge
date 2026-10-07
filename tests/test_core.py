@@ -12,6 +12,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from avatarforge.core import ROOT, scan, extract_zip, Jobs, sha256, read_json, write_json
 from avatarforge.app import compact_job
+from avatarforge.bone_aliases import map_humanoid
 
 
 class LocalEngineChecks(unittest.TestCase):
@@ -256,6 +257,93 @@ class LocalEngineChecks(unittest.TestCase):
         self.assertNotIn("required_bones", data["report"])
         self.assertEqual(data["report"]["issue_count"], 30)
         self.assertLess(len(json.dumps(data)), 2000)
+
+
+class HumanoidAliasChecks(unittest.TestCase):
+    def names(self, bones, preferred=None):
+        mapped, missing, ambiguous = map_humanoid(bones, preferred=preferred)
+        return {item["humanName"]: item["boneName"] for item in mapped}, missing, ambiguous
+
+    def test_xps_word_order_maps_required_humanoid(self):
+        bones = [
+            "root ground", "root hips", "root pelvis",
+            "leg left thigh", "leg left knee", "leg left ankle", "leg left toes",
+            "leg left thigh adj. 1", "unused leg left toes adj. 1",
+            "leg right thigh", "leg right knee", "leg right ankle", "leg right toes",
+            "spine lower", "spine middle", "spine upper 2", "spine upper 1",
+            "head neck lower", "head neck middle", "head neck upper",
+            "arm left shoulder 1", "arm left shoulder 2", "arm left elbow", "arm left wrist",
+            "arm left shoulder 1 adj. 1",
+            "arm right shoulder 1", "arm right shoulder 2", "arm right elbow", "arm right wrist",
+            "armor pelvis left",
+        ]
+        got, missing, ambiguous = self.names(bones)
+        self.assertEqual(missing, [], ambiguous)
+        self.assertEqual(got["Hips"], "root hips")
+        self.assertEqual(got["Spine"], "spine lower")
+        self.assertEqual(got["Chest"], "spine middle")
+        self.assertEqual(got["Neck"], "head neck lower")
+        self.assertEqual(got["Head"], "head neck upper")
+        self.assertEqual(got["LeftUpperLeg"], "leg left thigh")
+        self.assertEqual(got["LeftLowerLeg"], "leg left knee")
+        self.assertEqual(got["LeftFoot"], "leg left ankle")
+        self.assertEqual(got["LeftToes"], "leg left toes")
+        self.assertEqual(got["LeftShoulder"], "arm left shoulder 1")
+        self.assertEqual(got["LeftUpperArm"], "arm left shoulder 2")
+        self.assertEqual(got["LeftLowerArm"], "arm left elbow")
+        self.assertEqual(got["LeftHand"], "arm left wrist")
+        self.assertEqual(got["RightUpperArm"], "arm right shoulder 2")
+
+    def test_sided_hip_is_the_thigh_and_a_control_word_stays_hips(self):
+        bones = ["hips control", "bip_hip_L", "bip_hip_R", "bip_hip_2_L", "bip_knee_L", "bip_knee_R",
+                 "bip_foot_L", "bip_foot_R", "bip_spine_0", "bip_head", "Leg L", "Leg R"]
+        got, missing, _ambiguous = self.names(bones)
+        self.assertEqual(got["Hips"], "hips control")
+        self.assertEqual(got["LeftUpperLeg"], "bip_hip_L")
+        self.assertEqual(got["RightUpperLeg"], "bip_hip_R")
+        self.assertEqual(got["LeftLowerLeg"], "bip_knee_L")
+        self.assertNotIn("LeftUpperLeg", missing)
+
+    def test_deform_hip_beats_fk_and_valve_beats_a_helper_hand(self):
+        bones = ["DEF-bip_pelvis", "DEF-bip_hip_l", "bip_hip_fk_l", "DEF-bip_hip_r", "bip_hip_fk_r",
+                 "DEF-bip_knee_l", "DEF-bip_knee_r", "DEF-bip_foot_l", "DEF-bip_foot_r",
+                 "DEF-bip_spine_0", "DEF-bip_head", "ValveBiped.Bip01_R_Hand", "hand.R",
+                 "ValveBiped.Bip01_L_UpperArm", "ValveBiped.Bip01_Back_L_UpperArm"]
+        preferred = [bone for bone in bones if bone != "hand.R"]
+        got, _missing, ambiguous = self.names(bones, preferred)
+        self.assertEqual(got["Hips"], "DEF-bip_pelvis")
+        self.assertEqual(got["LeftUpperLeg"], "DEF-bip_hip_l")
+        self.assertEqual(got["RightHand"], "ValveBiped.Bip01_R_Hand")
+        self.assertEqual(got["LeftUpperArm"], "ValveBiped.Bip01_L_UpperArm")
+        self.assertEqual(ambiguous, [])
+
+    def test_maya_side_tokens_prefer_the_primary_limb(self):
+        bones = ["hips", "spine", "head",
+                 "char_bnd_lf_big_UpperLeg_jnt", "char_bnd_lf_mid_UpperLeg_jnt", "char_bnd_lf_small_UpperLeg_jnt",
+                 "char_bnd_lf_big_LowerLeg_jnt", "char_bnd_lf_big_Foot_jnt",
+                 "char_bnd_rt_big_UpperLeg_jnt", "char_bnd_rt_big_LowerLeg_jnt", "char_bnd_rt_big_Foot_jnt",
+                 "char_bnd_big_lf_lowerArm_jnt.001", "char_bnd_big_lf_lowerArm_jnt.002",
+                 "char_bnd_big_lf_hand_Jnt.001", "char_bnd_big_lf_hand_Jnt.002",
+                 "char_bnd_big_rt_lowerArm_jnt", "char_bnd_big_rt_hand_Jnt"]
+        got, missing, ambiguous = self.names(bones)
+        self.assertEqual(ambiguous, [])
+        self.assertNotIn("LeftUpperLeg", missing)
+        self.assertEqual(got["LeftUpperLeg"], "char_bnd_lf_big_UpperLeg_jnt")
+        self.assertEqual(got["RightUpperLeg"], "char_bnd_rt_big_UpperLeg_jnt")
+        self.assertEqual(got["LeftLowerArm"], "char_bnd_big_lf_lowerArm_jnt.001")
+        self.assertEqual(got["LeftHand"], "char_bnd_big_lf_hand_Jnt.001")
+
+    def test_game_deformer_names_stay_explicit(self):
+        bones = ["GAME_C1_HIP1", "GAME_C1_SPINE1", "GAME_C1_SPINE2", "GAME_C1_SPINE3", "GAME_C1_NECK1", "GAME_C1_HEAD1",
+                 "GAME_L1_clav1", "GAME_L1_arm1", "GAME_L1_arm2", "GAME_L1_arm3", "GAME_L1_leg1", "GAME_L1_leg2", "GAME_L1_leg3",
+                 "GAME_R1_clav1", "GAME_R1_arm1", "GAME_R1_arm2", "GAME_R1_arm3", "GAME_R1_leg1", "GAME_R1_leg2", "GAME_R1_leg3"]
+        got, missing, ambiguous = self.names(bones)
+        self.assertEqual(missing, [])
+        self.assertEqual(ambiguous, [])
+        self.assertEqual(got["Hips"], "GAME_C1_HIP1")
+        self.assertEqual(got["UpperChest"], "GAME_C1_SPINE3")
+        self.assertEqual(got["LeftUpperLeg"], "GAME_L1_leg1")
+        self.assertEqual(got["RightHand"], "GAME_R1_arm3")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Map humanoid joints from XPS/XNALara word order, ValveBiped and Maya `lf`/`rt` tokens, sided hip bones, and Blender `.001` duplicates. Twist, armor and finger helpers no longer tie with the real joint.
+- A shared material bakes from the meshes that have UV area. An unsupported slot no longer drops the slots on that mesh that can bake.
+- If the VRChat spine parent repair cannot keep bind positions, keep the original parents and continue the export instead of blocking it.
+
 ## 0.2.4
 
 - Keep meshes skinned to armatures that are Child Of the chosen character, including parts hidden in the source view layer. Their shape keys stay on those meshes. Hidden parts are disabled on the Unity prefab. Follower bones move onto the chosen rig under the target bone, because a second armature parented to a bone does not survive FBX import. Rig widgets named WGT- stay out.
