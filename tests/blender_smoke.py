@@ -100,6 +100,94 @@ def fixture(folder):
     return source, {name for name, *_ in definitions if name != "CTRL_Unused"}
 
 
+def accessory_parts(folder):
+    """Child-of follower rigs are wearable parts. Hidden ones stay in the FBX, renderer-off later."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    source, _ = fixture(folder)
+    rig = bpy.data.objects["FixtureRig"]
+    arm_data = bpy.data.armatures.new("OptionSkeleton")
+    option = bpy.data.objects.new("OptionRig", arm_data)
+    bpy.context.scene.collection.objects.link(option)
+    bpy.context.view_layer.objects.active = option
+    bpy.ops.object.mode_set(mode="EDIT")
+    bone = arm_data.edit_bones.new("Genital")
+    bone.head, bone.tail = (0, 0, 0), (0, 0.05, 0)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    option.location = (0.15, -0.2, 0.4)
+    constraint = option.constraints.new("CHILD_OF")
+    constraint.target = rig
+    constraint.subtarget = "Hips"
+    with bpy.context.temp_override(object=option, active_object=option):
+        bpy.ops.constraint.childof_set_inverse(constraint=constraint.name)
+    bpy.context.view_layer.update()
+
+    def part_mesh(name, points, collection, parent):
+        data = bpy.data.meshes.new(name + "Data")
+        data.from_pydata(points, [], [(0, 1, 2)])
+        obj = bpy.data.objects.new(name, data)
+        collection.objects.link(obj)
+        obj.parent = parent
+        obj.modifiers.new("Skin", "ARMATURE").object = parent
+        obj.vertex_groups.new(name="Genital").add([0, 1, 2], 1, "REPLACE")
+        return obj
+
+    vulva = part_mesh("Vulva", [(0, 0, 0), (0.05, 0, 0), (0, 0.05, 0)], bpy.context.scene.collection, option)
+    vulva.shape_key_add(name="Basis", from_mix=False)
+    opened = vulva.shape_key_add(name="Open", from_mix=False)
+    opened.data[0].co.z += 0.02
+    hidden_collection = bpy.data.collections.new("HiddenOptionCollection")
+    bpy.context.scene.collection.children.link(hidden_collection)
+    bpy.context.view_layer.layer_collection.children[hidden_collection.name].exclude = True
+    part_mesh("HiddenOption", [(0, 0, 0.1), (0.04, 0, 0.1), (0, 0.04, 0.1)], hidden_collection, option)
+    part_mesh("WGT-Option", [(0, 0, 0), (0.01, 0, 0), (0, 0.01, 0)], bpy.context.scene.collection, option)
+    other_data = bpy.data.armatures.new("OtherSkeleton")
+    other = bpy.data.objects.new("OtherRig", other_data)
+    bpy.context.scene.collection.objects.link(other)
+    bpy.context.view_layer.objects.active = other
+    bpy.ops.object.mode_set(mode="EDIT")
+    other_bone = other_data.edit_bones.new("Root")
+    other_bone.head, other_bone.tail = (1, 0, 0), (1, 0.1, 0)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    part_mesh("OtherCharacter", [(1, 0, 0), (1.02, 0, 0), (1, 0.02, 0)], bpy.context.scene.collection, other)
+    bpy.context.view_layer.update()
+    before_mesh = tuple(vulva.matrix_world.translation)
+    before_head = tuple(option.matrix_world @ option.data.bones["Genital"].head_local)
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    result = run({"source": str(source), "output": str(folder / "fixture-accessory"),
+                  "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert result["status"] != "blocked", result["issues"]
+    assert set(result["selection"]["meshes"]) == {"FixtureBody", "Vulva", "HiddenOption"}, result["selection"]
+    assert "WGT-Option" in result["selection"]["excluded_meshes"]
+    assert "OtherCharacter" in result["selection"]["excluded_meshes"]
+    parts = {part["mesh"]: part for part in result["optional_parts"]}
+    assert parts["Vulva"]["start_hidden"] is False
+    assert parts["HiddenOption"]["start_hidden"] is True
+    assert parts["Vulva"]["armature"] == "OptionRig" and parts["Vulva"]["bone"] == "Hips"
+    assert parts["HiddenOption"]["bone"] == "Hips"
+    assert "Open" in result["integrity"]["export_shape_keys"]["Vulva"]
+    assert result["integrity"]["export_meshes"]["Vulva"] == {"vertices": 3, "triangles": 1}
+    assert result["integrity"]["export_meshes"]["HiddenOption"] == {"vertices": 3, "triangles": 1}
+    assert "WGT-Option" not in result["integrity"]["export_meshes"]
+    assert "Genital" in result["integrity"]["export_bones"]
+    assert "Genital" in result["integrity"]["export_weighted_bones"]
+    assert not result["integrity"]["missing_weighted_bones"], result["integrity"]["missing_weighted_bones"]
+    assert any(item["code"] == "multiple_character_rigs" for item in result["issues"])
+    assert any(item["code"] == "accessory_parts" and item["severity"] == "info" for item in result["issues"])
+    assert result["material_recipe"]["bake_size"] == 64, result["material_recipe"]
+    assert "OptionRig" not in bpy.data.objects
+    exported = bpy.data.objects["FixtureRig"]
+    genital = exported.data.bones["Genital"]
+    assert genital.parent and genital.parent.name == "Hips", genital.parent
+    vulva = bpy.data.objects["Vulva"]
+    assert vulva.parent and vulva.parent.name == "FixtureRig"
+    mesh_delta = max(abs(actual - expected) for actual, expected in zip(vulva.matrix_world.translation, before_mesh))
+    head = exported.matrix_world @ genital.head_local
+    head_delta = max(abs(actual - expected) for actual, expected in zip(head, before_head))
+    assert mesh_delta < 1e-3, (tuple(vulva.matrix_world.translation), before_mesh, mesh_delta)
+    assert head_delta < 1e-3, (tuple(head), before_head, head_delta)
+
+
 def main():
     folder = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
     folder.mkdir(parents=True, exist_ok=True)
@@ -551,6 +639,7 @@ def main():
                     "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
     assert source.read_bytes() == source_bytes
     assert repaired["status"] == "needs_review", repaired["issues"]
+    assert repaired["material_recipe"]["bake_size"] == 64, repaired.get("material_recipe")
     assert repaired["selection"]["meshes"] == ["FixtureBody"]
     assert repaired["integrity"]["source_meshes"]["FixtureBody"] == {"vertices": 8, "triangles": 12}
     assert not repaired["integrity"]["geometry_errors"]
@@ -865,9 +954,10 @@ def main():
     baked = bpy.data.images.load(str(folder / "fixture-custom-glossy" / entry["base_color_texture"]))
     covered = [(red, green) for red, green in zip(baked.pixels[0::4], baked.pixels[1::4]) if red + green > .1]
     assert covered and sum(green for _, green in covered) / len(covered) > sum(red for red, _ in covered) / len(covered) + .15
+    accessory_parts(folder)
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True}))
 
 
 if __name__ == "__main__":

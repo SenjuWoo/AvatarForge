@@ -1,6 +1,6 @@
 {
   "name": "dev.senjuwoo.avatarforge",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "displayName": "AvatarForge",
   "description": "Import AvatarForge conversions, preserve secondary bones, and prepare a reviewed VRChat avatar prefab.",
   "unity": "2022.3",

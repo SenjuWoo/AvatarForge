@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Keep meshes skinned to armatures that are Child Of the chosen character, including parts hidden in the source view layer. Their shape keys stay on those meshes. Hidden parts are disabled on the Unity prefab. Follower bones move onto the chosen rig under the target bone, because a second armature parented to a bone does not survive FBX import. Rig widgets named WGT- stay out.
+- Bake complex materials on a no-limit preserve conversion at the source image resolution, capped at 4096, and warn when the source is larger. An explicit bake size and the balanced and mobile limits are unchanged.
+- On the prepared prefab, divide skinned renderer scales by the armature's unit scale so object-space toon outlines are not multiplied. Armature and bone scales stay. The raw FBX scale is unchanged.
+
 ## 0.2.3
 
 - Bake the visible surface of materials that are not a single Principled shader. Emission shaders keep their color and glow. Glossy, diffuse and glass shaders bake their color input. Mixed and grouped shaders get a lit appearance bake instead of a blank Unity material. A flat white coverage mask is not used as color. The source graph stays in the blend backup.

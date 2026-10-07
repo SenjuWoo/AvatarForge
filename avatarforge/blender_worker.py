@@ -266,6 +266,21 @@ def linked_rig(mesh):
     return rigs
 
 
+def accessory_armatures(main):
+    """Armatures constrained to the chosen rig are wearable parts, not other characters."""
+    if not main:
+        return []
+    found = []
+    for obj in bpy.context.scene.objects:
+        if obj.type != "ARMATURE" or obj == main:
+            continue
+        for constraint in obj.constraints:
+            if constraint.type == "CHILD_OF" and constraint.target == main and constraint.subtarget and constraint.influence > 0:
+                found.append((obj, constraint))
+                break
+    return found
+
+
 def choose_objects(options, report):
     all_meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     rigs = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -287,19 +302,31 @@ def choose_objects(options, report):
             raise CapabilityError("Requested armature was not found: " + str(requested))
     else:
         rig = candidates[0] if candidates else None
-        if len(candidates) > 1 and counts[candidates[1]] > 0:
-            issue(report, "warning", "multiple_character_rigs", "Multiple mesh-linked armatures exist; selected " + rig.name + ". Choose armature explicitly to override.")
+    accessories = accessory_armatures(rig)
+    accessory_rigs = {item for item, _ in accessories}
+    # A rig that only exists to follow this character is clothing or anatomy, not a second character.
+    unrelated = [item for item in candidates if item != rig and counts[item] > 0 and item not in accessory_rigs]
+    if rig and unrelated and not requested:
+        issue(report, "warning", "multiple_character_rigs", "Multiple mesh-linked armatures exist; selected " + rig.name + ". Choose armature explicitly to override.")
     requested_meshes = options.get("selected_meshes", options.get("meshes"))
     if requested_meshes:
         meshes = [o for o in all_meshes if o.name in requested_meshes]
         missing = sorted(set(requested_meshes) - {o.name for o in meshes})
         if missing:
             raise CapabilityError("Requested meshes were not found: " + ", ".join(missing))
-        if rig and any(linked_rig(mesh) - {rig} for mesh in meshes):
+        allowed = {rig} | accessory_rigs if rig else set()
+        if rig and any(linked_rig(mesh) - allowed for mesh in meshes):
             raise CapabilityError("Selected meshes bind different armatures; convert each character separately.")
     else:
-        meshes = [o for o in all_meshes if (not rig or rig in linked_rig(o)) and
-                  (options.get("include_hidden", False) or visibility[o])]
+        def selected_mesh(obj):
+            linked = linked_rig(obj)
+            if rig and rig not in linked and not (linked & accessory_rigs):
+                return False
+            if linked & accessory_rigs:
+                # Rigify-style widgets are controls, not wearable meshes.
+                return not obj.name.startswith("WGT-")
+            return options.get("include_hidden", False) or visibility[obj]
+        meshes = [o for o in all_meshes if selected_mesh(o)]
     if not meshes:
         raise CapabilityError("No character meshes selected. Pick meshes or enable include_hidden.")
     report["selection"] = {"armature": rig.name if rig else None,
@@ -308,12 +335,29 @@ def choose_objects(options, report):
                            "available_meshes": [{"name": o.name, "collections": [c.name for c in o.users_collection],
                                                   "source_visible": visibility[o], "selected": o in meshes,
                                                   "vertices": len(o.data.vertices), "has_shape_keys": bool(o.data.shape_keys)}
-                                                 for o in all_meshes if not rig or rig in linked_rig(o)],
+                                                 for o in all_meshes if not rig or rig in linked_rig(o) or linked_rig(o) & accessory_rigs],
                            "excluded_meshes": [o.name for o in all_meshes if o not in meshes]}
+    parts = []
+    for mesh in meshes:
+        owners = linked_rig(mesh) & accessory_rigs
+        if not owners:
+            continue
+        owner = sorted(owners, key=lambda item: item.name)[0]
+        constraint = next(item for rig_item, item in accessories if rig_item == owner)
+        parts.append({"mesh": mesh.name, "start_hidden": not visibility[mesh], "armature": owner.name, "bone": constraint.subtarget})
+    report["optional_parts"] = parts
+    if parts:
+        hidden = [part["mesh"] for part in parts if part["start_hidden"]]
+        shown = [part["mesh"] for part in parts if not part["start_hidden"]]
+        issue(report, "info", "accessory_parts",
+              "Kept " + str(len(parts)) + " meshes skinned to rigs that follow " + rig.name + ". "
+              + ("Visible: " + ", ".join(shown) + ". " if shown else "")
+              + ("Hidden in the source view and disabled on the Unity prefab: " + ", ".join(hidden) + ". " if hidden else "")
+              + "Their shape keys stay on those meshes. Follower bones are moved onto " + rig.name + " under the target bone because Blender constraints do not run in Unity.")
     if not rig:
         issue(report, "warning", "no_armature", "Static mesh has no skeleton. Humanoid rigging and skin weights require a rigged source or manual rigging.")
     # Explicitly selected hidden meshes must be present in the view layer for FBX operators.
-    chosen = set(meshes + ([rig] if rig else []))
+    chosen = set(meshes + ([rig] if rig else []) + [item for item, _constraint in accessories])
     def reveal(layer):
         needed = any(obj in chosen for obj in layer.collection.all_objects)
         if needed:
@@ -724,6 +768,93 @@ def prepare_rig(rig, meshes, options, report):
     return source_names, sorted(excluded), weighted
 
 
+def merge_accessory_armatures(main, meshes, report):
+    """Move Child Of follower bones onto the chosen rig.
+
+    Parenting a second armature to a bone exports an FBX that Blender 5.2 cannot reimport.
+    One armature, with those bones parented to the target, round-trips and follows in Unity.
+    """
+    if not main:
+        return
+    needed = set()
+    for mesh in meshes:
+        needed.update(owner for owner in linked_rig(mesh) if owner != main)
+    for armature, constraint in accessory_armatures(main):
+        if armature not in needed:
+            continue
+        target = constraint.subtarget
+        if target not in main.data.bones:
+            issue(report, "warning", "accessory_bone_missing",
+                  armature.name + " follows " + target + ", which is not on " + main.name + " after rig preparation. That follower armature is left out of the FBX, so its bones do not come with the mesh.")
+            continue
+        armature.hide_set(False)
+        armature.hide_viewport = False
+        bpy.context.view_layer.update()
+        taken = {bone.name for bone in main.data.bones}
+        rename = {}
+        for source_bone in armature.data.bones:
+            name = source_bone.name
+            if name in taken:
+                base = armature.name + "_" + name
+                name = base
+                index = 2
+                while name in taken:
+                    name = base + "_" + str(index)
+                    index += 1
+            rename[source_bone.name] = name
+            taken.add(name)
+        inverse = main.matrix_world.inverted()
+        inverse_rotation = main.matrix_world.to_3x3().inverted()
+        specs = []
+        for source_bone in armature.data.bones:
+            specs.append({
+                "name": rename[source_bone.name],
+                "head": armature.matrix_world @ source_bone.head_local,
+                "tail": armature.matrix_world @ source_bone.tail_local,
+                "x_axis": (armature.matrix_world.to_3x3() @ source_bone.x_axis).normalized(),
+                "parent": rename[source_bone.parent.name] if source_bone.parent else target,
+                "use_deform": source_bone.use_deform,
+            })
+        for mesh in meshes:
+            if armature not in linked_rig(mesh):
+                continue
+            for group in mesh.vertex_groups:
+                renamed = rename.get(group.name)
+                if renamed and renamed != group.name and mesh.vertex_groups.get(renamed) is None:
+                    group.name = renamed
+            for modifier in mesh.modifiers:
+                if modifier.type == "ARMATURE" and modifier.object == armature:
+                    modifier.object = main
+            world = mesh.matrix_world.copy()
+            mesh.parent = main
+            mesh.parent_type = "OBJECT"
+            mesh.parent_bone = ""
+            bpy.context.view_layer.update()
+            mesh.matrix_world = world
+        bpy.ops.object.select_all(action="DESELECT")
+        main.hide_set(False)
+        main.select_set(True)
+        bpy.context.view_layer.objects.active = main
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            for spec in specs:
+                edit = main.data.edit_bones.new(spec["name"])
+                edit.head = inverse @ spec["head"]
+                edit.tail = inverse @ spec["tail"]
+                edit.align_roll(inverse_rotation @ spec["x_axis"])
+            for spec in specs:
+                edit = main.data.edit_bones[spec["name"]]
+                edit.use_connect = False
+                parent = main.data.edit_bones.get(spec["parent"])
+                if parent:
+                    edit.parent = parent
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        for spec in specs:
+            main.data.bones[spec["name"]].use_deform = spec["use_deform"]
+        bpy.data.objects.remove(armature, do_unlink=True)
+
+
 def bones_report(rig, options, report):
     names = [b.name for b in rig.data.bones] if rig else []
     preferred = set(report.get("weighted_bones", [])) | {bone.name for bone in rig.data.bones if bone.use_deform} if rig else set()
@@ -836,9 +967,13 @@ def optimize(meshes, rig, preset, options, report):
             nonportable.append({"mesh": mesh.name, "modifiers": modifiers})
         if not mesh.data.uv_layers:
             issue(report, "warning", "missing_uv", mesh.name + " has no UV map; texture baking/assignment requires UV unwrapping.")
-        if rig:
-            valid = {g.index for g in mesh.vertex_groups if g.name in rig.data.bones}
-            unweighted = sum(not any(g.group in valid and g.weight > 1e-8 for g in v.groups) for v in mesh.data.vertices)
+        owners = linked_rig(mesh)
+        if not owners and rig:
+            owners = {rig}
+        if owners:
+            bone_names = {bone.name for owner in owners if owner and owner.type == "ARMATURE" for bone in owner.data.bones}
+            valid = {group.index for group in mesh.vertex_groups if group.name in bone_names}
+            unweighted = sum(not any(group.group in valid and group.weight > 1e-8 for group in vertex.groups) for vertex in mesh.data.vertices)
             if unweighted:
                 issue(report, "warning", "unweighted_vertices", f"{mesh.name}: {unweighted} vertices have no weight on selected armature bones.")
     report["nonportable_modifiers"] = nonportable
@@ -1869,6 +2004,17 @@ def optimize_baked_channels(meshes, report):
               "Removed " + str(len(reductions)) + " redundant baked channel maps using source constants or every covered pixel. Varying color, alpha, normal and surface detail remains at the chosen texture resolution.")
 
 
+def resolution_bake_size(materials, limit):
+    """No texture limit uses the source image edge, capped at the baker maximum."""
+    native = 0
+    for material in materials:
+        for image in material_images(material):
+            native = max(native, max(image.size))
+    if limit:
+        return limit, native
+    return min(4096, max(64, native or 2048)), native
+
+
 def texture_manifest(meshes, source, output, preset, options, report):
     materials = sorted({m for mesh in meshes for m in mesh.data.materials if m}, key=lambda m: m.name)
     folder = output / "textures"
@@ -1902,14 +2048,22 @@ def texture_manifest(meshes, source, output, preset, options, report):
                               for mesh in meshes if material in mesh.data.materials[:])
             if uv_mismatch or any(n.type not in simple for n in nodes) or any(shader.inputs[name].is_linked for name in ("Roughness", "Metallic", "Alpha")):
                 auto_candidates.append(material)
+    if "bake_size" in options:
+        size, native_edge = int(options["bake_size"]), 0
+    else:
+        size, native_edge = resolution_bake_size(materials, limit)
+    if mode is not False and native_edge > size:
+        issue(report, "warning", "texture_bake_capped",
+              "Source images reach " + str(native_edge) + " pixels. This bake is " + str(size)
+              + ". The original images stay in the converted Blender file. Unique-UV bakes are not produced above 4096.")
     if mode is True or auto_candidates:
         selected = materials if mode is True else auto_candidates
-        bake_materials(meshes, selected, int(options.get("bake_size", limit or 2048)), report)
+        bake_materials(meshes, selected, size, report)
         optimize_baked_channels(meshes, report)
     if mode is not False:
-        bake_custom_surfaces(meshes, materials, int(options.get("bake_size", limit or 2048)), report)
+        bake_custom_surfaces(meshes, materials, size, report)
     report["material_recipe"] = {"mode": "bake" if mode is True else "textures" if mode is False else "auto",
-                                 "bake_size": int(options.get("bake_size", limit or 2048)),
+                                 "bake_size": size,
                                  "auto_bake_candidates": [m.name for m in auto_candidates]}
     images = set().union(*(material_images(m) for m in materials)) if materials else set()
     for index, image in enumerate(sorted(images, key=lambda i: i.name)):
@@ -2136,9 +2290,11 @@ def compact_fbx_skin_clusters(root):
     return len(empty)
 
 
-def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report):
+def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes, report, extra_rigs=None):
     expected_meshes = {mesh.name: {"vertices": len(mesh.data.vertices), "triangles": triangles([mesh])} for mesh in meshes}
-    chosen = meshes + ([rig] if rig else [])
+    extra_rigs = [item for item in (extra_rigs or []) if item]
+    accessory_bones = {bone.name for item in extra_rigs for bone in item.data.bones}
+    chosen = meshes + ([rig] if rig else []) + extra_rigs
     bpy.ops.object.select_all(action="DESELECT")
     for obj in chosen:
         obj.hide_set(False)
@@ -2188,7 +2344,7 @@ def export_and_verify(rig, meshes, output, source_bones, excluded, source_shapes
     export_shapes = shape_manifest(exported_meshes)
     export_weighted = set().union(*(weighted_bones(exported_meshes, r) for r in exported_rigs)) if exported_rigs else set()
     missing_weighted = sorted(set(report.get("weighted_bones", [])) - export_weighted)
-    missing_bones = sorted(set(source_bones) - set(excluded) - set(export_bones))
+    missing_bones = sorted((set(source_bones) - set(excluded) - set(export_bones)) | (accessory_bones - set(export_bones)))
     missing_shapes = {mesh: sorted(set(keys) - set(export_shapes.get(mesh, []))) for mesh, keys in source_shapes.items()}
     missing_shapes = {mesh: keys for mesh, keys in missing_shapes.items() if keys}
     report["integrity"] = {"source_bones": source_bones, "export_bones": export_bones,
@@ -2257,6 +2413,11 @@ def run(job):
         if report["intentionally_masked_weighted_bones"]:
             issue(report, "info", "masked_skin_influences", "Some bone influences belonged entirely to authored hidden geometry; their bones remain in the skeleton: " + ", ".join(report["intentionally_masked_weighted_bones"]))
         source_bones, excluded, weighted = prepare_rig(rig, meshes, options, report)
+        merge_accessory_armatures(rig, meshes, report)
+        if rig:
+            source_bones = sorted(set(source_bones) | {bone.name for bone in rig.data.bones})
+        report["weighted_bones"] = sorted(weighted_bones(meshes, rig))
+        weighted = set(report["weighted_bones"])
         optimize(meshes, rig, preset, options, report)
         bones_report(rig, options, report)
         texture_manifest(meshes, source, output, preset, options, report)

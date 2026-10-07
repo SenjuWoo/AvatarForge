@@ -25,6 +25,7 @@ namespace AvatarForge.Editor
     [Serializable] public sealed class ObjectManifest { public string name; public string[] materials; }
     [Serializable] public sealed class ShapeManifest { public string @object; public string[] names; public float[] values; }
     [Serializable] public sealed class IntegrityManifest { public string[] export_bones, export_weighted_bones; }
+    [Serializable] public sealed class OptionalPart { public string mesh, armature, bone; public bool start_hidden; }
     [Serializable] public sealed class ConversionOptimization { public int target_triangles; }
     [Serializable] public sealed class ConversionReport
     {
@@ -38,6 +39,7 @@ namespace AvatarForge.Editor
         public string[] export_bones, export_weighted_bones, missing_required_humanoid;
         public IntegrityManifest integrity;
         public ConversionOptimization optimization;
+        public OptionalPart[] optional_parts;
         public ConversionIssue[] issues;
     }
     [Serializable] public sealed class PhysicsApproval { public string[] approved_physics = Array.Empty<string>(); }
@@ -216,6 +218,8 @@ namespace AvatarForge.Editor
                 VerifySkinWeights(source, instance, output, issues);
                 ApplyShapeDefaults(source, instance, output, issues);
                 BuildMaterials(source, input, destination, instance, output, issues);
+                ApplyOptionalParts(source, instance, issues);
+                CompensateRendererUnitScale(instance, issues);
                 SetupSdk(source, approvals, instance, output, issues);
                 output.prefab = destination + "/Avatar.prefab";
                 PrefabUtility.SaveAsPrefabAsset(instance, output.prefab);
@@ -387,6 +391,62 @@ namespace AvatarForge.Editor
                 if (!output.skin_weight_integrity_verified) AddIssue(issues, "error", "SKIN_WEIGHT_LOSS", "Weighted bones lost every influence during Unity import: " + string.Join(", ", output.missing_weighted_bones));
             }
             if (output.max_skin_influences > 4) AddIssue(issues, "review", "SKINNING_QUALITY_REVIEW", "Mesh vertices use up to " + output.max_skin_influences + " bone influences. Verify the target runtime's skinning quality and appearance before upload.");
+        }
+
+        static void ApplyOptionalParts(ConversionReport source, GameObject instance, List<ConversionIssue> issues)
+        {
+            foreach (var part in source.optional_parts ?? Array.Empty<OptionalPart>())
+            {
+                if (part == null || !part.start_hidden || string.IsNullOrEmpty(part.mesh)) continue;
+                var matches = instance.GetComponentsInChildren<Renderer>(true).Where(renderer => renderer.gameObject.name == part.mesh).ToArray();
+                if (matches.Length != 1)
+                {
+                    AddIssue(issues, "review", "OPTIONAL_PART_MATCH", "Optional part " + part.mesh + " must match exactly one renderer; found " + matches.Length + ".");
+                    continue;
+                }
+                matches[0].enabled = false;
+            }
+        }
+
+        // lilToon extrudes outlines in object space before the model matrix. FBX_SCALE_NONE
+        // leaves a centimeter unit factor on the armature and on skinned renderers. Dividing
+        // only those renderer scales keeps world size (skinning rewrites object-space vertices)
+        // and stops the outline from being multiplied. Static meshes and bone transforms stay.
+        static void CompensateRendererUnitScale(GameObject instance, List<ConversionIssue> issues)
+        {
+            var renderers = instance.GetComponentsInChildren<Renderer>(true);
+            var rendererTransforms = new HashSet<Transform>(renderers.Select(renderer => renderer.transform));
+            Transform armature = null;
+            int bestChildren = 0;
+            foreach (var transform in instance.GetComponentsInChildren<Transform>(true))
+            {
+                if (rendererTransforms.Contains(transform)) continue;
+                Vector3 scale = transform.localScale;
+                float axis = Mathf.Abs(scale.x);
+                if (axis < 50f || Mathf.Abs(axis - Mathf.Abs(scale.y)) > 0.01f || Mathf.Abs(axis - Mathf.Abs(scale.z)) > 0.01f) continue;
+                if (transform.childCount <= bestChildren) continue;
+                bestChildren = transform.childCount;
+                armature = transform;
+            }
+            if (!armature) return;
+            float unit = Mathf.Abs(armature.localScale.x);
+            int changed = 0;
+            foreach (var renderer in renderers)
+            {
+                if (!(renderer is SkinnedMeshRenderer)) continue;
+                Transform transform = renderer.transform;
+                Vector3 scale = transform.localScale;
+                Vector3 next = scale;
+                bool any = false;
+                if (Mathf.Abs(scale.x) >= unit * 0.5f) { next.x = scale.x / unit; any = true; }
+                if (Mathf.Abs(scale.y) >= unit * 0.5f) { next.y = scale.y / unit; any = true; }
+                if (Mathf.Abs(scale.z) >= unit * 0.5f) { next.z = scale.z / unit; any = true; }
+                if (!any || next == scale) continue;
+                transform.localScale = next;
+                changed++;
+            }
+            if (changed > 0)
+                AddIssue(issues, "info", "RENDERER_UNIT_SCALE", "Divided " + changed + " skinned renderer scales by the armature unit scale " + unit + " so object-space toon outlines stay in metres. Armature and bone scales are unchanged. A toon shader on the raw FBX still sees the imported mesh scale.");
         }
 
         static void ApplyShapeDefaults(ConversionReport source, GameObject instance, UnityReport output, List<ConversionIssue> issues)
@@ -837,9 +897,61 @@ namespace AvatarForge.Editor
             Directory.CreateDirectory(root);
             try
             {
-                File.WriteAllText(Path.Combine(root, "report.json"), "{\"schema_version\":1,\"humanoid\":[{\"humanName\":\"Hips\",\"boneName\":\"pelvis\",\"confidence\":1}],\"export_bones\":[\"pelvis\",\"breast_L\"]}");
+                File.WriteAllText(Path.Combine(root, "report.json"), "{\"schema_version\":1,\"humanoid\":[{\"humanName\":\"Hips\",\"boneName\":\"pelvis\",\"confidence\":1}],\"export_bones\":[\"pelvis\",\"breast_L\"],\"optional_parts\":[{\"mesh\":\"HiddenOption\",\"start_hidden\":true,\"armature\":\"OptionRig\",\"bone\":\"Hips\"}]}");
                 var report = LoadReport(root);
                 if (report.humanoid.Length != 1 || report.export_bones.Length != 2) throw new Exception("Manifest decoding failed.");
+                if (report.optional_parts == null || report.optional_parts.Length != 1 || !report.optional_parts[0].start_hidden || report.optional_parts[0].mesh != "HiddenOption") throw new Exception("Optional part decoding failed.");
+                var avatar = new GameObject("model");
+                try
+                {
+                    var armature = new GameObject("Armature");
+                    armature.transform.SetParent(avatar.transform, false);
+                    armature.transform.localScale = new Vector3(100f, 100f, 100f);
+                    for (int index = 0; index < 3; index++)
+                    {
+                        var bone = new GameObject("bone" + index);
+                        bone.transform.SetParent(armature.transform, false);
+                    }
+                    var body = new GameObject("Body");
+                    body.transform.SetParent(avatar.transform, false);
+                    body.transform.localScale = new Vector3(100f, 100f, 100f);
+                    body.AddComponent<SkinnedMeshRenderer>();
+                    var mirror = new GameObject("Mirror");
+                    mirror.transform.SetParent(avatar.transform, false);
+                    mirror.transform.localScale = new Vector3(-100f, 100f, 100f);
+                    mirror.AddComponent<SkinnedMeshRenderer>();
+                    var partial = new GameObject("Partial");
+                    partial.transform.SetParent(avatar.transform, false);
+                    partial.transform.localScale = new Vector3(100f, 1f, 100f);
+                    partial.AddComponent<SkinnedMeshRenderer>();
+                    var aqua = new GameObject("Aqua");
+                    aqua.transform.SetParent(avatar.transform, false);
+                    aqua.transform.localScale = new Vector3(85.6f, 86f, 100f);
+                    aqua.AddComponent<SkinnedMeshRenderer>();
+                    var small = new GameObject("Small");
+                    small.transform.SetParent(avatar.transform, false);
+                    small.AddComponent<SkinnedMeshRenderer>();
+                    var staticMesh = new GameObject("Static");
+                    staticMesh.transform.SetParent(avatar.transform, false);
+                    staticMesh.transform.localScale = new Vector3(100f, 100f, 100f);
+                    staticMesh.AddComponent<MeshRenderer>();
+                    var hidden = new GameObject("HiddenOption");
+                    hidden.transform.SetParent(avatar.transform, false);
+                    hidden.AddComponent<MeshRenderer>().enabled = true;
+                    var issues = new List<ConversionIssue>();
+                    ApplyOptionalParts(report, avatar, issues);
+                    if (hidden.GetComponent<Renderer>().enabled) throw new Exception("Hidden optional part stayed enabled.");
+                    CompensateRendererUnitScale(avatar, issues);
+                    if (armature.transform.localScale != new Vector3(100f, 100f, 100f)) throw new Exception("Armature scale changed.");
+                    if (body.transform.localScale != Vector3.one) throw new Exception("Body scale was not compensated.");
+                    if (mirror.transform.localScale != new Vector3(-1f, 1f, 1f)) throw new Exception("Mirrored scale lost its sign.");
+                    if (partial.transform.localScale != new Vector3(1f, 1f, 1f)) throw new Exception("Partial unit scale was wrong.");
+                    if (!Mathf.Approximately(aqua.transform.localScale.x, 0.856f) || !Mathf.Approximately(aqua.transform.localScale.y, 0.86f) || !Mathf.Approximately(aqua.transform.localScale.z, 1f)) throw new Exception("Non-uniform renderer scale was wrong.");
+                    if (small.transform.localScale != Vector3.one || staticMesh.transform.localScale != new Vector3(100f, 100f, 100f)) throw new Exception("Scale-1 or static meshes were changed.");
+                    if (!issues.Any(issue => issue.code == "RENDERER_UNIT_SCALE" && issue.severity == "info")) throw new Exception("Renderer scale compensation was not reported.");
+                    ApplyOptionalParts(new ConversionReport(), avatar, issues);
+                }
+                finally { UnityEngine.Object.DestroyImmediate(avatar); }
                 bool rejected = false;
                 try { ResolveContainedFile(root, "../outside.fbx"); } catch (InvalidDataException) { rejected = true; }
                 if (!rejected) throw new Exception("Path traversal was accepted.");
