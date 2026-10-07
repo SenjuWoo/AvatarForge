@@ -1,12 +1,15 @@
 # AvatarForge
 
-Local model-to-avatar workbench: choose a model, convert through Blender, then prepare a Unity/VRChat project. Normal conversions use **no AI, account or API credits**.
+[![Current release](https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?label=release)](https://github.com/SenjuWoo/AvatarForge/releases/latest)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**[Download the release](https://github.com/SenjuWoo/AvatarForge/releases/latest)** → extract the AvatarForge ZIP into your apps folder → double-click **INSTALL-TOOLS.bat**. It installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
+Local workbench that turns a downloaded character into a reviewed Unity project for VRChat. Give it a Blender file, an XNALara or XPS mesh, an MMD `.pmx` or `.pmd`, a VRM, a Source or Source Filmmaker export, or a ZIP from SmutBase, SFMLab, or a similar gallery. Conversion runs on your machine through Blender. Shape keys, skin weights, and secondary bones stay in the export, then AvatarForge prepares a prefab and preview scene for the VRChat SDK.
+
+Normal conversions use **no AI, account, or API credits**. A mesh with no rig still needs an armature before it can become a Humanoid avatar. `needs_review` means the files exist and the report lists what to inspect. AvatarForge does not upload the avatar.
+
+**[Download the current release](https://github.com/SenjuWoo/AvatarForge/releases/latest)** → extract the ZIP into its own folder → double-click **INSTALL-TOOLS.bat**. That installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
 
 Keep the application in its own folder, outside AI skill directories. **Connect AI** in the interface, or **CONNECT-AI.bat**, registers the optional local tools. Skill folders receive only the small AvatarForge usage skill.
-
-It automates the repeatable work, with real Blender and Unity validation. Reports identify model-specific repair and preview work. An arbitrary model may still need rigging or artistic repair.
 
 ![AvatarForge local interface with a generated test model](docs/ui-preview.jpg)
 
@@ -31,7 +34,7 @@ Every conversion writes into a new `outputs/<job>/` folder. Source files are rea
 
 If Unity shows overlapping avatars or extra limbs, open the generated `Preview.unity` scene by itself. **Open Unity** does this automatically when the project has no unsaved scene work; otherwise it preserves that work and reports the scene to open.
 
-Supported Blender shaders bake automatically on the local CPU. A surface that is not a single Principled shader is baked from its visible color, and from its emission when the surface actually emits. Proven constant channels become material scalars instead of redundant maps; varying color, alpha and surface detail remain at the chosen resolution. Advanced controls can force compatible materials to bake or choose texture extraction only. PC uses 2K bakes and mobile uses 1K; Preserve keeps source textures and uses the reviewed 2K bake size. Importer paths, humanoid overrides, outfit selection and scale can also be specified there.
+Supported Blender shaders bake automatically on the local CPU. A surface that is not a single Principled shader is baked from its visible color, and from its emission when the surface actually emits. Proven constant channels become material scalars instead of redundant maps; varying color, alpha and surface detail remain at the chosen resolution. Advanced controls can force compatible materials to bake or choose texture extraction only. PC uses 2K bakes and mobile uses 1K. Preserve keeps source textures. A complex shader bakes at the largest source image edge, capped at 4096, and the report says when that cap applied. Importer paths, humanoid overrides, outfit selection and scale can also be specified there.
 
 ## What it does
 
@@ -49,6 +52,12 @@ Supported Blender shaders bake automatically on the local CPU. A surface that is
 - Creates selected PhysBone components on secondary roots; it does not infer source simulator tuning from a bone name.
 - Bakes supported complex shaders from the source render UV map into export UV0, and offers shape-preserving Unity optimization using established tools. See the dependency and validation documents for the exact installed/tested combinations.
 
+## Downloads it is meant to open
+
+Gallery sites are sources, not file formats. SmutBase and SFMLab packs are usually Blender, FBX, Source, or a ZIP of those. XNALara galleries publish `.xps`, `.mesh`, and `.ascii`. MMD and Booth models are `.pmx` or `.pmd`. VRoid and similar tools publish `.vrm`. DAZ and game rips often arrive as a Blender file with a generated control rig. AvatarForge picks the importer from the file you select. A ZIP is extracted into a new folder so a pack with several models does not silently convert the wrong one.
+
+Unrigged meshes import and export. They need an armature and skin weights before a Humanoid avatar can be validated. AvatarForge does not invent a humanoid rig for arbitrary geometry.
+
 ## Formats
 
 | Input | Route |
@@ -63,8 +72,6 @@ Supported Blender shaders bake automatically on the local CPU. A surface that is
 | ZIP packs from model sites | Extracted into a new folder, then select the model |
 
 For a differently named VTA, set `vta_filepath` in Advanced options; `vta_mesh` selects its reference mesh when several meshes exist. Morph names and nonzero deformation are checked, followed by actual FBX preservation.
-
-SmutBase is a model source, not a file format. Its Blender/Source models use the corresponding route above. Unrigged meshes are imported/exported, but need an armature and skin weights before a Humanoid avatar can be validated. This tool does not create a guaranteed humanoid rig for arbitrary geometry.
 
 ## Presets and preservation
 

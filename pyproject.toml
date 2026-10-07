@@ -1,7 +1,7 @@
 [project]
 name = "avatarforge-aio"
 version = "0.2.6"
-description = "Local model-to-Blender-to-Unity avatar conversion workbench"
+description = "Local Blender, XNALara, MMD, VRM, and Source/SFM to Unity/VRChat avatar workbench"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = []
