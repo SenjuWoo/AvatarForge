@@ -827,9 +827,47 @@ def main():
             weights = {mesh.vertex_groups[group.group].name: group.weight for group in vertex.groups}
             assert abs(weights["Hips"] - .6) < 1e-5
             assert abs(weights["Breast.L"] - .2) < 1e-5 and abs(weights["Butt.L"] - .2) < 1e-5
+    # A shader that is not one Principled node still has to produce Unity color.
+    source, _ = fixture(folder)
+    tree = bpy.data.materials["FixtureSkin"].node_tree
+    tree.nodes.clear()
+    emission = tree.nodes.new("ShaderNodeEmission")
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    painted = bpy.data.images.new("CustomEmit", width=8, height=8, alpha=True)
+    painted.pixels[:] = [channel for y in range(8) for x in range(8)
+                         for channel in ((1, 0, .2, 1) if x < 4 else (0, .8, .9, 1))]
+    painted.pack()
+    texture = tree.nodes.new("ShaderNodeTexImage")
+    texture.image = painted
+    tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    emitted = run({"source": str(source), "output": str(folder / "fixture-custom-emission"), "preset": "balanced",
+                   "options": {"preview": False, "bake_materials": "auto", "bake_size": 64}})
+    entry = emitted["materials"][0]
+    assert entry.get("base_color_texture") and entry.get("emission_texture"), emitted["issues"]
+    assert any(item.get("method") == "surface_appearance" for item in emitted.get("baked_materials", [])), emitted["issues"]
+    baked = bpy.data.images.load(str(folder / "fixture-custom-emission" / entry["base_color_texture"]))
+    assert max(baked.pixels[0::4]) > .7 and max(baked.pixels[2::4]) > .5
+    source, _ = fixture(folder)
+    tree = bpy.data.materials["FixtureSkin"].node_tree
+    tree.nodes.clear()
+    glossy = tree.nodes.new("ShaderNodeBsdfGlossy")
+    glossy.inputs["Color"].default_value = (.05, .8, .15, 1)
+    glossy.inputs["Roughness"].default_value = .4
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    tree.links.new(glossy.outputs["BSDF"], output.inputs["Surface"])
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    glossy_result = run({"source": str(source), "output": str(folder / "fixture-custom-glossy"), "preset": "balanced",
+                         "options": {"preview": False, "bake_materials": "auto", "bake_size": 64}})
+    entry = glossy_result["materials"][0]
+    assert entry.get("base_color_texture") and not entry.get("emission_texture"), glossy_result["issues"]
+    baked = bpy.data.images.load(str(folder / "fixture-custom-glossy" / entry["base_color_texture"]))
+    covered = [(red, green) for red, green in zip(baked.pixels[0::4], baked.pixels[1::4]) if red + green > .1]
+    assert covered and sum(green for _, green in covered) / len(covered) > sum(red for red, _ in covered) / len(covered) + .15
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True}))
 
 
 if __name__ == "__main__":

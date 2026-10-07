@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Bake the visible surface of materials that are not a single Principled shader. Emission shaders keep their color and glow. Glossy, diffuse and glass shaders bake their color input. Mixed and grouped shaders get a lit appearance bake instead of a blank Unity material. A flat white coverage mask is not used as color. The source graph stays in the blend backup.
+
 ## 0.2.2
 
 - Parent the neck and both shoulders directly to the mapped UpperChest, or to Chest when UpperChest is absent, so VRChat's spine hierarchy check can pass. Bind positions stay put. Intermediate spine bones and secondary chains stay in the skeleton.

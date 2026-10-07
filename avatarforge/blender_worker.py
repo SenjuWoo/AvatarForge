@@ -1056,7 +1056,6 @@ def bake_materials(meshes, materials, size, report):
         principals = [node for node in tree.nodes if node.type == "BSDF_PRINCIPLED"] if tree else []
         outputs = [node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output] if tree else []
         if len(principals) != 1 or len(outputs) != 1:
-            issue(report, "warning", "material_bake_skipped", material.name + ": bake needs one Principled shader and one active output.")
             continue
         bound = [mesh for mesh in meshes if material in mesh.data.materials[:]]
         if any(mesh in unavailable_source_uv for mesh in bound):
@@ -1306,6 +1305,410 @@ def bake_materials(meshes, materials, size, report):
                 uv.active_render = render
 
 
+def appearance_coverage(image):
+    """Mean and variance of covered surface pixels. Black bake margins are not coverage."""
+    import numpy as np  # Part of the supported native Blender runtime.
+    count = int(image.size[0]) * int(image.size[1])
+    if not count:
+        return {"covered": 0, "mean": 0.0, "variance": 0.0, "spread": 0.0, "chroma": 0.0}
+    values = np.empty(count * 4, dtype=np.float32)
+    image.pixels.foreach_get(values)
+    pixels = values.reshape((-1, 4))
+    if not np.isfinite(pixels).all():
+        return {"covered": 0, "mean": 0.0, "variance": 0.0, "spread": 0.0, "chroma": 0.0}
+    covered = pixels[:, :3].sum(axis=1) > 0.04
+    used = int(np.count_nonzero(covered))
+    if used < 8:
+        return {"covered": used, "mean": 0.0, "variance": 0.0, "spread": 0.0, "chroma": 0.0}
+    selected = pixels[covered][:, :3]
+    mean_rgb = selected.mean(axis=0)
+    return {"covered": used, "mean": float(selected.mean()), "variance": float(selected.var()),
+            "spread": float(selected.std(axis=0).max()), "chroma": float(mean_rgb.max() - mean_rgb.min())}
+
+
+_ALBEDO_BSDF = {"BSDF_GLOSSY", "BSDF_DIFFUSE", "BSDF_GLASS", "BSDF_REFRACTION", "BSDF_TRANSLUCENT",
+                 "BSDF_PRINCIPLED", "BSDF_SHEEN", "BSDF_HAIR", "BSDF_HAIR_PRINCIPLED", "BSDF_ANISOTROPIC",
+                 "BSDF_VELVET", "BSDF_TOON", "SUBSURFACE_SCATTERING"}
+
+
+def emission_is_surface_color(score):
+    """Emission is usable color unless it is black or a flat white coverage mask."""
+    if score["mean"] <= 0.04:
+        return False
+    return not (score["mean"] > 0.85 and score["chroma"] < 0.05)
+
+
+def surface_albedo_socket(tree):
+    """Color input of one concrete BSDF. Mixed groups stay on the lit appearance bake."""
+    outputs = [node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output]
+    if len(outputs) != 1 or not outputs[0].inputs["Surface"].is_linked:
+        return None
+    node = outputs[0].inputs["Surface"].links[0].from_node
+    seen = set()
+    while node is not None and node.as_pointer() not in seen:
+        seen.add(node.as_pointer())
+        if node.type in _ALBEDO_BSDF:
+            return node.inputs.get("Base Color") or node.inputs.get("Color")
+        if node.type == "REROUTE":
+            node = node.inputs[0].links[0].from_node if node.inputs[0].is_linked else None
+            continue
+        if node.type in {"MIX_SHADER", "ADD_SHADER"}:
+            branches = [link.from_node for socket in node.inputs for link in socket.links
+                        if link.from_socket.type == "SHADER" and link.from_node.type != "BSDF_TRANSPARENT"]
+            if len(branches) != 1:
+                return None
+            node = branches[0]
+            continue
+        return None
+    return None
+
+
+def material_uv_points(mesh, material, uv_name):
+    """UV coordinates for faces that actually use this material."""
+    layer = mesh.data.uv_layers[uv_name]
+    points = []
+    for polygon in mesh.data.polygons:
+        if polygon.material_index >= len(mesh.data.materials) or mesh.data.materials[polygon.material_index] != material:
+            continue
+        points.extend(layer.data[index].uv for index in polygon.loop_indices)
+    return points
+
+
+def bake_custom_surfaces(meshes, materials, size, report):
+    """Bake the visible surface when a shader is not one Principled node.
+
+    Emission graphs keep their emitted color. Glass, glossy and mixed graphs
+    get a lit appearance bake. The source node tree is copied before replacement.
+    """
+    size = size or 2048
+    if not 64 <= size <= 4096:
+        raise ValueError("bake_size must be 64..4096 pixels")
+    already = {item["name"] for item in report.get("baked_materials", [])}
+    pending = []
+    for material in materials:
+        tree = material.node_tree
+        if not tree or material.name in already:
+            continue
+        outputs = [node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output]
+        if len(outputs) != 1 or not outputs[0].inputs["Surface"].is_linked:
+            continue
+        principals = [node for node in tree.nodes if node.type == "BSDF_PRINCIPLED"]
+        if len(principals) == 1 and outputs[0].inputs["Surface"].links[0].from_node == principals[0]:
+            continue
+        bound = [mesh for mesh in meshes if material in getattr(mesh.data, "materials", [])[:]]
+        covered = [mesh for mesh in bound if mesh.data.uv_layers and material_uv_has_area(mesh, material)]
+        if not covered:
+            if bound:
+                issue(report, "warning", "material_bake_skipped", material.name + ": no UV-covered faces, so the source shader was kept.")
+            continue
+        if len(covered) != len(bound):
+            issue(report, "warning", "custom_surface_partial", material.name + ": baked the meshes that have UV area. A slot on this shader has no covered UV and keeps the source look.")
+        bound = covered
+        uv_name = bound[0].data.uv_layers[0].name
+        if any(mesh.data.uv_layers.get(uv_name) is None for mesh in bound):
+            issue(report, "warning", "material_bake_skipped", material.name + ": meshes using this shader do not share the first UV map.")
+            continue
+        coordinates = [point for mesh in bound for point in material_uv_points(mesh, material, uv_name)]
+        if not coordinates:
+            issue(report, "warning", "material_bake_skipped", material.name + ": no UV-covered faces, so the source shader was kept.")
+            continue
+        if any(min(point) < -1e-5 for point in coordinates):
+            issue(report, "warning", "material_bake_skipped", material.name + ": negative UVs need an explicit atlas before a custom surface can be baked.")
+            continue
+        columns = max(1, math.ceil(max(point.x for point in coordinates) - 1e-6))
+        rows = max(1, math.ceil(max(point.y for point in coordinates) - 1e-6))
+        if (columns > 1 or rows > 1) and any(len(mesh.data.uv_layers) >= 8 for mesh in bound):
+            issue(report, "warning", "material_bake_skipped", material.name + ": tiled custom-shader UVs need a free UV channel.")
+            continue
+        pending.append((material, bound, uv_name, columns, rows))
+    if not pending:
+        return
+    scene = bpy.context.scene
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    engine, samples = scene.render.engine, scene.cycles.samples
+    previous_world = scene.world
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.seed = 0
+    scene.cycles.use_denoising = False
+    visibility = [(modifier, modifier.show_render, modifier.show_viewport)
+                  for mesh in meshes for modifier in mesh.modifiers if modifier.type != "ARMATURE"]
+    render_hide = [(obj, obj.hide_render) for obj in scene.objects]
+    uvs = [(mesh, mesh.data.uv_layers.active_index, [(uv, uv.active_render) for uv in mesh.data.uv_layers]) for mesh in meshes if mesh.data and mesh.data.uv_layers]
+    for modifier, _, _ in visibility:
+        modifier.show_render = modifier.show_viewport = False
+    studio = sun = sun_object = None
+    try:
+        for material, bound, uv_name, columns, rows in pending:
+            tree = material.node_tree
+            destination = uv_name
+            if columns > 1 or rows > 1:
+                destination = f"AF_Atlas_{columns}x{rows}_Bake"
+                while any(mesh.data.uv_layers.get(destination) for mesh in bound):
+                    destination += "_"
+                atlas_ready = True
+                for mesh in bound:
+                    layer = mesh.data.uv_layers.new(name=destination)
+                    if not layer:
+                        issue(report, "warning", "material_bake_skipped", material.name + ": tiled custom-shader UVs need a free UV channel.")
+                        atlas_ready = False
+                        break
+                    for old, new in zip(mesh.data.uv_layers[uv_name].data, layer.data):
+                        new.uv = (old.uv.x / columns, old.uv.y / rows)
+                if not atlas_ready:
+                    continue
+            visited = set()
+
+            def localize_shared_groups(node_tree, seen):
+                if not node_tree or node_tree.as_pointer() in seen:
+                    return
+                seen.add(node_tree.as_pointer())
+                for node in node_tree.nodes:
+                    if node.type != "GROUP" or not node.node_tree:
+                        continue
+                    if node.node_tree.users > 1:
+                        node.node_tree = node.node_tree.copy()
+                    localize_shared_groups(node.node_tree, seen)
+
+            def pin(node_tree):
+                if not node_tree or node_tree.as_pointer() in visited:
+                    return
+                visited.add(node_tree.as_pointer())
+                for node in list(node_tree.nodes):
+                    if node.type == "GROUP":
+                        pin(node.node_tree)
+                    elif node.type == "TEX_IMAGE" and not node.inputs["Vector"].is_linked:
+                        uv_node = node_tree.nodes.new("ShaderNodeUVMap")
+                        uv_node.uv_map = uv_name
+                        node_tree.links.new(uv_node.outputs["UV"], node.inputs["Vector"])
+                    elif node.type == "TEX_COORD" and node.outputs["UV"].is_linked:
+                        uv_node = node_tree.nodes.new("ShaderNodeUVMap")
+                        uv_node.uv_map = uv_name
+                        for link in list(node.outputs["UV"].links):
+                            node_tree.links.new(uv_node.outputs["UV"], link.to_socket)
+
+            try:
+                localize_shared_groups(tree, set())
+                pin(tree)
+            except Exception as exc:
+                issue(report, "warning", "material_bake_failed", material.name + ": custom surface bake stopped: " + str(exc) + ". Source shader kept.")
+                continue
+            for mesh in bound:
+                layer = mesh.data.uv_layers[destination]
+                mesh.data.uv_layers.active_index = list(mesh.data.uv_layers).index(layer)
+                layer.active_render = True
+            images = {}
+
+            def bake_pass(label, bake_type, extra, pass_samples):
+                image = bpy.data.images.new("AF_Baked_" + material.name + "_" + label, width=size, height=size, alpha=True)
+                image.generated_color = (0, 0, 0, 0)
+                image.colorspace_settings.name = "Non-Color" if label == "normal" else "sRGB"
+                image["avatarforge_owned"] = True
+                image["avatarforge_channel"] = "base_color" if label == "combined" else label
+                image["avatarforge_uv_scale"] = [1 / columns, 1 / rows]
+                target = tree.nodes.new("ShaderNodeTexImage")
+                target.label = "AvatarForge bake target"
+                target.image = image
+                for other in tree.nodes:
+                    other.select = False
+                target.select = True
+                tree.nodes.active = target
+                scene.cycles.samples = pass_samples
+                bpy.ops.object.select_all(action="DESELECT")
+                for obj, _ in render_hide:
+                    if obj.type == "MESH":
+                        obj.hide_render = True
+                for mesh in bound:
+                    mesh.hide_set(False)
+                    mesh.hide_viewport = mesh.hide_render = False
+                    mesh.select_set(True)
+                bpy.context.view_layer.objects.active = bound[0]
+                images[label] = image
+                try:
+                    options = {"type": bake_type, "use_clear": True, "margin": 16}
+                    if bake_type == "NORMAL":
+                        options["normal_space"] = "TANGENT"
+                    options.update(extra)
+                    result = bpy.ops.object.bake(**options)
+                    if "FINISHED" not in result:
+                        raise RuntimeError("Blender cancelled " + label + " bake")
+                finally:
+                    tree.nodes.remove(target)
+                return image
+
+            def release_unused(mapping):
+                seen = set()
+                for image in list(mapping.values()):
+                    pointer = image.as_pointer()
+                    if pointer in seen:
+                        continue
+                    seen.add(pointer)
+                    if image.users == 0:
+                        bpy.data.images.remove(image)
+
+            def bake_socket_color(socket):
+                output_node = next(node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output)
+                previous = [link.from_socket for link in output_node.inputs["Surface"].links]
+                emit_node = tree.nodes.new("ShaderNodeEmission")
+                try:
+                    if socket.is_linked:
+                        tree.links.new(socket.links[0].from_socket, emit_node.inputs["Color"])
+                    else:
+                        value = socket.default_value
+                        emit_node.inputs["Color"].default_value = tuple(value) if hasattr(value, "__len__") else (value, value, value, 1)
+                    for link in list(output_node.inputs["Surface"].links):
+                        tree.links.remove(link)
+                    tree.links.new(emit_node.outputs["Emission"], output_node.inputs["Surface"])
+                    return bake_pass("albedo", "EMIT", {}, 1)
+                finally:
+                    if emit_node.as_pointer() in {node.as_pointer() for node in tree.nodes}:
+                        tree.nodes.remove(emit_node)
+                    for link in list(output_node.inputs["Surface"].links):
+                        tree.links.remove(link)
+                    for source in previous:
+                        tree.links.new(source, output_node.inputs["Surface"])
+
+            saved = None
+            try:
+                emit = bake_pass("emission", "EMIT", {}, 1)
+                emit_score = appearance_coverage(emit)
+                albedo = emit if emission_is_surface_color(emit_score) else None
+                fallback_color = None
+                if albedo is not None:
+                    images["base_color"] = emit
+                else:
+                    socket = surface_albedo_socket(tree)
+                    if socket is not None:
+                        baked_color = bake_socket_color(socket)
+                        color_score = appearance_coverage(baked_color)
+                        flat_white = color_score["mean"] > 0.85 and color_score["chroma"] < 0.05 and color_score["variance"] <= 0.0008
+                        if color_score["mean"] > 0.04 and not flat_white:
+                            albedo = baked_color
+                            images["base_color"] = baked_color
+                            baked_color["avatarforge_channel"] = "base_color"
+                            images.pop("albedo", None)
+                        elif color_score["mean"] > 0.04:
+                            fallback_color = baked_color
+                        else:
+                            images.pop("albedo", None)
+                            if baked_color.users == 0:
+                                bpy.data.images.remove(baked_color)
+                if albedo is None:
+                    if studio is None:
+                        studio = bpy.data.worlds.new("AF_AppearanceWorld")
+                        if studio.node_tree is None:
+                            studio.use_nodes = True
+                        background = next((node for node in studio.node_tree.nodes if node.type == "BACKGROUND"), None)
+                        if background is None:
+                            background = studio.node_tree.nodes.new("ShaderNodeBackground")
+                        world_output = next((node for node in studio.node_tree.nodes if node.type == "OUTPUT_WORLD"), None)
+                        if world_output is None:
+                            world_output = studio.node_tree.nodes.new("ShaderNodeOutputWorld")
+                        background.inputs["Color"].default_value = (0.75, 0.9, 1.0, 1.0)
+                        background.inputs["Strength"].default_value = 1.5
+                        for link in list(world_output.inputs["Surface"].links):
+                            studio.node_tree.links.remove(link)
+                        studio.node_tree.links.new(background.outputs["Background"], world_output.inputs["Surface"])
+                        scene.world = studio
+                        sun = bpy.data.lights.new("AF_AppearanceSun", "SUN")
+                        sun.energy = 4
+                        sun_object = bpy.data.objects.new("AF_AppearanceSun", sun)
+                        scene.collection.objects.link(sun_object)
+                        sun_object.rotation_euler = (0.9, 0.2, 0.4)
+                        bpy.context.view_layer.update()
+                    combined = bake_pass("combined", "COMBINED", {"pass_filter": {"EMIT", "DIRECT", "INDIRECT", "COLOR", "DIFFUSE", "GLOSSY", "TRANSMISSION"}}, 16)
+                    if appearance_coverage(combined)["mean"] > 0.04:
+                        albedo = combined
+                        images["base_color"] = combined
+                        combined["avatarforge_channel"] = "base_color"
+                        extra = images.pop("albedo", None)
+                        if extra is not None and extra is not albedo and extra.users == 0:
+                            bpy.data.images.remove(extra)
+                    elif fallback_color is not None:
+                        albedo = fallback_color
+                        images["base_color"] = fallback_color
+                        fallback_color["avatarforge_channel"] = "base_color"
+                        images.pop("albedo", None)
+                if albedo is None:
+                    release_unused(images)
+                    issue(report, "warning", "material_bake_skipped", material.name + ": custom surface bake stayed dark, so the source shader was kept.")
+                    continue
+                if not emission_is_surface_color(emit_score):
+                    leftover = images.pop("emission", None)
+                    if leftover is not None and leftover is not albedo and leftover.users == 0:
+                        bpy.data.images.remove(leftover)
+                normal = bake_pass("normal", "NORMAL", {}, 1)
+                if appearance_coverage(normal)["spread"] < 0.02:
+                    images.pop("normal", None)
+                    if normal.users == 0:
+                        bpy.data.images.remove(normal)
+                saved = material.copy()
+                saved.name = "AF_Source_" + material.name
+                saved.use_fake_user = True
+                tree.nodes.clear()
+                shader = tree.nodes.new("ShaderNodeBsdfPrincipled")
+                output = tree.nodes.new("ShaderNodeOutputMaterial")
+                tree.links.new(shader.outputs["BSDF"], output.inputs["Surface"])
+                uv_node = tree.nodes.new("ShaderNodeUVMap")
+                uv_node.uv_map = destination
+                for channel, socket_name in (("base_color", "Base Color"), ("emission", "Emission Color")):
+                    image = images.get(channel)
+                    if image is None or (channel == "emission" and (image is albedo and "combined" in images or not emission_is_surface_color(emit_score))):
+                        continue
+                    texture = tree.nodes.new("ShaderNodeTexImage")
+                    texture.image = image
+                    tree.links.new(uv_node.outputs["UV"], texture.inputs["Vector"])
+                    tree.links.new(texture.outputs["Color"], shader.inputs[socket_name])
+                if images.get("normal"):
+                    texture = tree.nodes.new("ShaderNodeTexImage")
+                    texture.image = images["normal"]
+                    tree.links.new(uv_node.outputs["UV"], texture.inputs["Vector"])
+                    normal_node = tree.nodes.new("ShaderNodeNormalMap")
+                    normal_node.uv_map = destination
+                    tree.links.new(texture.outputs["Color"], normal_node.inputs["Color"])
+                    tree.links.new(normal_node.outputs["Normal"], shader.inputs["Normal"])
+                shader.inputs["Roughness"].default_value = 0.45
+                shader.inputs["Emission Strength"].default_value = 1 if any(
+                    node.type == "TEX_IMAGE" and node.image and node.image.get("avatarforge_channel") == "emission"
+                    for node in tree.nodes) else 0
+                material["avatarforge_baked_alpha_mode"] = "OPAQUE"
+                report.setdefault("baked_materials", []).append({
+                    "name": material.name, "size": size, "destination_uv": "UV0", "method": "surface_appearance",
+                    "source_material_backup": saved.name,
+                    "channels": [channel for channel in ("base_color", "normal", "emission") if channel in images and (
+                        channel != "emission" or shader.inputs["Emission Strength"].default_value > 0)]})
+                issue(report, "info", "custom_surface_baked", material.name + ": baked the visible surface into Standard maps because the shader is not a single Principled node. Source graph kept as " + saved.name + ".")
+            except Exception as exc:
+                if saved is not None:
+                    original_name = material.name
+                    material.user_remap(saved)
+                    material.name = "AF_Failed_" + original_name
+                    saved.name = original_name
+                    if material in materials:
+                        materials[materials.index(material)] = saved
+                release_unused(images)
+                issue(report, "warning", "material_bake_failed", original_name + ": custom surface bake stopped: " + str(exc) + ". Source shader kept." if saved is not None else material.name + ": custom surface bake stopped: " + str(exc) + ". Source shader kept.")
+    finally:
+        scene.render.engine, scene.cycles.samples = engine, samples
+        scene.world = previous_world
+        if sun_object:
+            bpy.data.objects.remove(sun_object, do_unlink=True)
+        if sun:
+            bpy.data.lights.remove(sun)
+        if studio:
+            bpy.data.worlds.remove(studio)
+        for modifier, render, viewport in visibility:
+            modifier.show_render, modifier.show_viewport = render, viewport
+        for obj, hidden in render_hide:
+            obj.hide_render = hidden
+        for mesh, active, flags in uvs:
+            if active < len(mesh.data.uv_layers):
+                mesh.data.uv_layers.active_index = active
+            for uv, render in flags:
+                uv.active_render = render
+
+
 def constant_socket_value(socket, group_context=None, visited=None):
     """Resolve only literal sockets and transparent node/group connections."""
     visited = set() if visited is None else visited
@@ -1503,6 +1906,8 @@ def texture_manifest(meshes, source, output, preset, options, report):
         selected = materials if mode is True else auto_candidates
         bake_materials(meshes, selected, int(options.get("bake_size", limit or 2048)), report)
         optimize_baked_channels(meshes, report)
+    if mode is not False:
+        bake_custom_surfaces(meshes, materials, int(options.get("bake_size", limit or 2048)), report)
     report["material_recipe"] = {"mode": "bake" if mode is True else "textures" if mode is False else "auto",
                                  "bake_size": int(options.get("bake_size", limit or 2048)),
                                  "auto_bake_candidates": [m.name for m in auto_candidates]}
