@@ -7,5 +7,5 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["avatarforge", "Member[app].Member[read_local_request].ReturnValue", "path-injection"]
-      - ["avatarforge", "Member[app].Member[read_local_request].ReturnValue", "command-injection"]
+      - ["avatarforge", "Member[authority].Member[read_local_request].ReturnValue", "path-injection"]
+      - ["avatarforge", "Member[authority].Member[read_local_request].ReturnValue", "command-injection"]

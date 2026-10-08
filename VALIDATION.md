@@ -1,5 +1,17 @@
 # Observed validation
 
+## 0.2.8 repair checks (2026-10-07)
+
+- Standard-library, contract and JavaScript syntax checks passed after the canonical Windows path repair. The HTTP tests exercise actual token, Host, Origin and bounded JSON handling.
+- Native Blender regression verified follower joint world orientation, required attachment targets, colliding bone/vertex-group names, untouched source-image pixels and earlier bakes, and transparent/holdout review behavior. Required bones, shape keys and weighted-bone names survive actual FBX reimport.
+- Native Unity posed geometry checks cover nine weighted, bone-less, nested-bone, mirrored and nonuniform-scale cases. Safe outline compensation preserves sampled world vertices, shape deformation and bounds; unsupported cases retain their transforms and report review items.
+- A complete-name but disconnected mechanical limb fixture imports as Generic, saves an actual prefab and preview scene, and retains its bones, morphs and weights. It is not reported as a calibrated Humanoid.
+- Installer regressions passed on Windows PowerShell 5.1 and PowerShell 7.6.5, including restoration of truly absent process environment variables.
+- Fresh isolated Blender and Unity MCP sessions completed initialize/tools-list and read-only scene queries (36 and 47 tools respectively). Owned test editors closed and Unity's temporary settings were restored.
+- A fresh Preserve conversion of the supplied Mimi model completed with 53,059 triangles, 192 bones and 250 shape keys, with zero missing required bones, shape groups or weighted-bone names. Its source file remained unchanged. Disconnected Humanoid ancestry and material review items remain explicit.
+
+The historical checks below remain evidence for their stated versions and inputs; they do not replace testing the current release archive.
+
 ## Portable app and AI registration
 
 - Standard-library suite: 35 tests passed locally, including nine Windows configuration formats in a clean home containing spaces and Unicode, real stdio initialization/tools-list, exact configuration backups, repeated registration, conflict/malformed/locked-file preservation, personally edited skills, project-only scope and moved conversion history.
