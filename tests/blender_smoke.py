@@ -13,7 +13,7 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "avatarforge"))
-from blender_worker import constant_socket_value, covered_uniform_pixels, run, export_and_verify, preview
+from blender_worker import constant_socket_value, covered_uniform_pixels, run, export_and_verify, preview, bake_custom_surfaces, merge_accessory_armatures
 from bone_aliases import map_humanoid
 
 
@@ -104,7 +104,7 @@ def fixture(folder):
     return source, {name for name, *_ in definitions if name != "CTRL_Unused"}
 
 
-def accessory_parts(folder):
+def accessory_parts(folder, target="Hips"):
     """Child-of follower rigs are wearable parts. Hidden ones stay in the FBX, renderer-off later."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
@@ -117,11 +117,12 @@ def accessory_parts(folder):
     bpy.ops.object.mode_set(mode="EDIT")
     bone = arm_data.edit_bones.new("Genital")
     bone.head, bone.tail = (0, 0, 0), (0, 0.05, 0)
+    bone.roll = .35
     bpy.ops.object.mode_set(mode="OBJECT")
     option.location = (0.15, -0.2, 0.4)
     constraint = option.constraints.new("CHILD_OF")
     constraint.target = rig
-    constraint.subtarget = "Hips"
+    constraint.subtarget = target
     with bpy.context.temp_override(object=option, active_object=option):
         bpy.ops.constraint.childof_set_inverse(constraint=constraint.name)
     bpy.context.view_layer.update()
@@ -157,6 +158,7 @@ def accessory_parts(folder):
     bpy.context.view_layer.update()
     before_mesh = tuple(vulva.matrix_world.translation)
     before_head = tuple(option.matrix_world @ option.data.bones["Genital"].head_local)
+    before_frame = (option.matrix_world @ option.data.bones["Genital"].matrix_local).to_quaternion()
     bpy.ops.wm.save_as_mainfile(filepath=str(source))
     result = run({"source": str(source), "output": str(folder / "fixture-accessory"),
                   "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
@@ -167,8 +169,8 @@ def accessory_parts(folder):
     parts = {part["mesh"]: part for part in result["optional_parts"]}
     assert parts["Vulva"]["start_hidden"] is False
     assert parts["HiddenOption"]["start_hidden"] is True
-    assert parts["Vulva"]["armature"] == "OptionRig" and parts["Vulva"]["bone"] == "Hips"
-    assert parts["HiddenOption"]["bone"] == "Hips"
+    assert parts["Vulva"]["armature"] == "OptionRig" and parts["Vulva"]["bone"] == target
+    assert parts["HiddenOption"]["bone"] == target
     assert "Open" in result["integrity"]["export_shape_keys"]["Vulva"]
     assert result["integrity"]["export_meshes"]["Vulva"] == {"vertices": 3, "triangles": 1}
     assert result["integrity"]["export_meshes"]["HiddenOption"] == {"vertices": 3, "triangles": 1}
@@ -182,7 +184,9 @@ def accessory_parts(folder):
     assert "OptionRig" not in bpy.data.objects
     exported = bpy.data.objects["FixtureRig"]
     genital = exported.data.bones["Genital"]
-    assert genital.parent and genital.parent.name == "Hips", genital.parent
+    assert genital.parent and genital.parent.name == target, genital.parent
+    assert target in result["integrity"]["export_bones"]
+    assert not any(item["code"] == "accessory_bone_missing" for item in result["issues"])
     vulva = bpy.data.objects["Vulva"]
     assert vulva.parent and vulva.parent.name == "FixtureRig"
     mesh_delta = max(abs(actual - expected) for actual, expected in zip(vulva.matrix_world.translation, before_mesh))
@@ -190,6 +194,105 @@ def accessory_parts(folder):
     head_delta = max(abs(actual - expected) for actual, expected in zip(head, before_head))
     assert mesh_delta < 1e-3, (tuple(vulva.matrix_world.translation), before_mesh, mesh_delta)
     assert head_delta < 1e-3, (tuple(head), before_head, head_delta)
+    after_frame = (exported.matrix_world @ genital.matrix_local).to_quaternion()
+    assert before_frame.rotation_difference(after_frame).angle < 1e-4, (before_frame, after_frame)
+
+
+def follower_group_collision():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    rigs = []
+    for name in ("Main", "Accessory"):
+        data = bpy.data.armatures.new(name + "Data")
+        rig = bpy.data.objects.new(name, data)
+        bpy.context.scene.collection.objects.link(rig)
+        bpy.context.view_layer.objects.active = rig
+        rig.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bone = data.edit_bones.new("Hips")
+        bone.head, bone.tail = (0, 0, 0), (0, 1, 0)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        rigs.append(rig)
+    main, accessory = rigs
+    constraint = accessory.constraints.new("CHILD_OF")
+    constraint.target, constraint.subtarget = main, "Hips"
+    data = bpy.data.meshes.new("CollisionPartData")
+    data.from_pydata([(0, 0, 0), (.1, 0, 0), (0, .1, 0)], [], [(0, 1, 2)])
+    part = bpy.data.objects.new("CollisionPart", data)
+    bpy.context.scene.collection.objects.link(part)
+    part.modifiers.new("Skin", "ARMATURE").object = accessory
+    part.vertex_groups.new(name="Hips").add([0, 1, 2], 1, "REPLACE")
+    part.vertex_groups.new(name="Accessory_Hips")  # An unused authoring group must not steal the skin.
+    merge_accessory_armatures(main, [part], {"issues": []})
+    assert "Accessory_Hips_2" in main.data.bones
+    assert "Accessory_Hips" not in main.data.bones
+    assert part.modifiers["Skin"].object == main
+    for vertex in part.data.vertices:
+        assert {part.vertex_groups[group.group].name: group.weight for group in vertex.groups} == {"Accessory_Hips_2": 1.0}
+
+
+def custom_surface_regressions():
+    # Baking one slot must not overwrite another slot's active source image.
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    data = bpy.data.meshes.new("CustomSlotsData")
+    data.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                     (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)], [], [(0, 1, 2, 3), (4, 5, 6, 7)])
+    mesh = bpy.data.objects.new("CustomSlots", data)
+    bpy.context.scene.collection.objects.link(mesh)
+    uv = data.uv_layers.new(name="UVMap")
+    for polygon in data.polygons:
+        for index, point in zip(polygon.loop_indices, ((0, 0), (1, 0), (1, 1), (0, 1))):
+            uv.data[index].uv = point
+    materials, sources, pixels = [], [], []
+    for name, color in (("CustomRed", (.8, .1, .1, 1)), ("CustomGreen", (.1, .8, .1, 1))):
+        material = bpy.data.materials.new(name)
+        material.use_nodes = True
+        tree = material.node_tree
+        tree.nodes.clear()
+        emission = tree.nodes.new("ShaderNodeEmission")
+        output = tree.nodes.new("ShaderNodeOutputMaterial")
+        tree.links.new(emission.outputs[0], output.inputs["Surface"])
+        source = bpy.data.images.new(name + "Source", width=8, height=8, alpha=True)
+        source.pixels[:] = list(color) * 64
+        source.pack()
+        texture = tree.nodes.new("ShaderNodeTexImage")
+        texture.image = source
+        tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
+        tree.nodes.active = texture
+        data.materials.append(material)
+        materials.append(material)
+        sources.append(source)
+        pixels.append(tuple(source.pixels[:]))
+    data.polygons[1].material_index = 1
+    report = {"issues": []}
+    bake_custom_surfaces([mesh], materials, 64, report)
+    assert len(report.get("baked_materials", [])) == 2, report["issues"]
+    for material, source, original in zip(materials, sources, pixels):
+        assert tuple(source.pixels[:]) == original, material.name
+        backup = bpy.data.materials["AF_Source_" + material.name]
+        assert any(node.type == "TEX_IMAGE" and node.image == source for node in backup.node_tree.nodes)
+        assert tuple(source.pixels[:]) == original, backup.name
+    red, green = [next(node.image for node in material.node_tree.nodes if node.type == "TEX_IMAGE" and
+                       node.image.get("avatarforge_channel") == "emission") for material in materials]
+    assert max(red.pixels[0::4]) > max(red.pixels[1::4]) + .15
+    assert max(green.pixels[1::4]) > max(green.pixels[0::4]) + .15
+    # Arbitrary transparent shader graphs remain available instead of becoming opaque.
+    tree = materials[0].node_tree
+    tree.nodes.clear()
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (.8, .1, .1, 1)
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.inputs[0].default_value = .5
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    report = {"issues": []}
+    bake_custom_surfaces([mesh], [materials[0]], 64, report)
+    assert not report.get("baked_materials"), report["issues"]
+    assert any(item["code"] == "custom_surface_transparency" and item["severity"] == "warning" for item in report["issues"])
+    assert output.inputs["Surface"].links[0].from_node == mix and mix.inputs[0].default_value == .5
+    assert transparent in tree.nodes[:] and not any(node.type == "BSDF_PRINCIPLED" for node in tree.nodes)
 
 
 def main():
@@ -878,6 +981,42 @@ def main():
     assert exported.data.bones["Head"].parent.name == "Neck"
     for bone in exported.data.bones:
         assert max(abs(bone.head_local[index] - rib_heads[bone.name][index]) for index in range(3)) < 1e-4, bone.name
+    # A sided hip name can be a mechanical leaf, with the actual thigh chain
+    # beside it. Name completeness must not hide that invalid Humanoid tree.
+    source, _ = fixture(folder)
+    rig, body = bpy.data.objects["FixtureRig"], bpy.data.objects["FixtureBody"]
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    rig.data.edit_bones["Hips"].name = "hips control"
+    rig.data.edit_bones["Spine"].parent = None
+    for side in ("Left", "Right"):
+        short = side[0]
+        mechanical = rig.data.edit_bones[side + "UpperLeg"]
+        mechanical.name = "bip_hip_" + short
+        chain = rig.data.edit_bones.new("Leg " + short)
+        chain.head, chain.tail = mechanical.head, mechanical.tail
+        chain.parent = rig.data.edit_bones["hips control"]
+        lower = rig.data.edit_bones[side + "LowerLeg"]
+        lower.parent = chain
+        lower.name = "bip_knee_" + short
+        rig.data.edit_bones[side + "Foot"].name = "bip_foot_" + short
+    bpy.ops.object.mode_set(mode="OBJECT")
+    if body.vertex_groups.get("Hips"):
+        body.vertex_groups["Hips"].name = "hips control"
+    bpy.ops.wm.save_as_mainfile(filepath=str(source))
+    split_chain = run({"source": str(source), "output": str(folder / "fixture-split-hip-chain"),
+                       "preset": "preserve", "options": {"preview": False, "bake_materials": False}})
+    assert split_chain["status"] == "needs_review", split_chain["issues"]
+    assert not split_chain["missing_required_humanoid"]
+    invalid = [item["message"] for item in split_chain["issues"] if item["code"] == "humanoid_hierarchy"]
+    assert set(invalid) == {
+        "Spine is not below Hips; verify the armature's Humanoid mapping in Unity.",
+        "LeftLowerLeg is not below LeftUpperLeg; verify the armature's Humanoid mapping in Unity.",
+        "RightLowerLeg is not below RightUpperLeg; verify the armature's Humanoid mapping in Unity."}, invalid
+    assert not split_chain["integrity"]["missing_bones"] and not split_chain["integrity"]["missing_shape_keys"]
+    exported = next(obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE")
+    assert not exported.data.bones["bip_hip_L"].children
+    assert exported.data.bones["bip_knee_L"].parent.name == "Leg L"
     # Sparse skins must not bind every unused jiggle/control bone into every
     # mesh. Keep all transforms and exact weighted bindings/morphs instead.
     from io_scene_fbx import parse_fbx, encode_bin
@@ -965,6 +1104,9 @@ def main():
     covered = [(red, green) for red, green in zip(baked.pixels[0::4], baked.pixels[1::4]) if red + green > .1]
     assert covered and sum(green for _, green in covered) / len(covered) > sum(red for red, _ in covered) / len(covered) + .15
     accessory_parts(folder)
+    accessory_parts(folder / "follower-control-target", "CTRL_Unused")
+    follower_group_collision()
+    custom_surface_regressions()
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
     print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True, "integer_vector_custom_properties": True, "unselectable_mesh_exported": True}))

@@ -244,7 +244,11 @@ function Invoke-ScopedDotnet($Executable,[string[]]$Arguments) {
         foreach($name in $settings.Keys){[Environment]::SetEnvironmentVariable($name,$settings[$name],'Process')}
         & $Executable @Arguments
     }finally{
-        foreach($name in $settings.Keys){[Environment]::SetEnvironmentVariable($name,$previous[$name],'Process')}
+        foreach($name in $settings.Keys){
+            $value=$previous[$name]
+            if($null -eq $value){$value=[NullString]::Value} # PowerShell 7.5+ preserves empty strings.
+            [Environment]::SetEnvironmentVariable($name,$value,'Process')
+        }
     }
 }
 

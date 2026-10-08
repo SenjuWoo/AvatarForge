@@ -1,5 +1,6 @@
 """Runnable without third-party test packages: python -m unittest discover -s tests."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -77,6 +78,44 @@ class LocalEngineChecks(unittest.TestCase):
             outside = root.parent / "outside.fbx"
             with self.assertRaises(ValueError):
                 local_path(outside, root=root)
+
+    def test_local_path_windows_case_and_resolved_link_containment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            inside = root / "folder"
+            inside.mkdir()
+            if os.name == "nt":
+                self.assertEqual(local_path(inside, root=str(root).upper()), str(inside.resolve()))
+            target = root / "outside"
+            target.mkdir()
+            link = inside / "link"
+            if os.name == "nt":
+                result = subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                                         "New-Item -ItemType Junction -Path $env:AF_TEST_LINK -Target $env:AF_TEST_TARGET | Out-Null"],
+                                        env=dict(os.environ, AF_TEST_LINK=str(link), AF_TEST_TARGET=str(target)),
+                                        capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            else:
+                link.symlink_to(target, target_is_directory=True)
+            try:
+                with self.assertRaises(ValueError):
+                    local_path(link / "model.fbx", root=inside)
+            finally:
+                if os.name == "nt":
+                    link.rmdir()
+                else:
+                    link.unlink()
+
+    def test_archive_streams_member_without_eager_payload_allocation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "large.zip"
+            payload = b"fixture" * 300000
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                output.writestr("body.fbx", payload)
+            with patch.object(zipfile.ZipFile, "read", side_effect=AssertionError("must stream members")):
+                result = extract_zip(archive, root / "extract")
+            self.assertEqual(Path(result["models"][0]["path"]).read_bytes(), payload)
 
     def test_archive_rejects_case_collisions_and_windows_devices(self):
         with tempfile.TemporaryDirectory() as temp:

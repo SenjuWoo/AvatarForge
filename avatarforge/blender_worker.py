@@ -760,6 +760,10 @@ def prepare_rig(rig, meshes, options, report):
     if relationships and options.get("repair_generated_hierarchy", True):
         repair_generated_hierarchy(rig, weighted, relationships, options, report)
     keep = {b.name for b in rig.data.bones if b.name in weighted or not CONTROLLER.match(b.name) or physics_category(b.name)}
+    # A selected follower makes its attachment joint required, even without main-mesh weights.
+    owners = set().union(*(linked_rig(mesh) for mesh in meshes)) if meshes else set()
+    keep.update(constraint.subtarget for owner, constraint in accessory_armatures(rig)
+                if owner in owners and constraint.subtarget in rig.data.bones)
     for name in list(keep):
         parent = rig.data.bones[name].parent
         while parent:
@@ -810,17 +814,19 @@ def merge_accessory_armatures(main, meshes, report):
             continue
         target = constraint.subtarget
         if target not in main.data.bones:
-            issue(report, "warning", "accessory_bone_missing",
-                  armature.name + " follows " + target + ", which is not on " + main.name + " after rig preparation. That follower armature is left out of the FBX, so its bones do not come with the mesh.")
-            continue
+            raise CapabilityError(armature.name + " follows missing bone " + target + " on " + main.name
+                                  + ". Repair the follower attachment before exporting its skinned meshes.")
         armature.hide_set(False)
         armature.hide_viewport = False
         bpy.context.view_layer.update()
-        taken = {bone.name for bone in main.data.bones}
+        existing = {bone.name for bone in main.data.bones}
+        bound = [mesh for mesh in meshes if armature in linked_rig(mesh)]
+        # Reserve authoring groups and later source joints before choosing collision names.
+        taken = existing | {bone.name for bone in armature.data.bones} | {group.name for mesh in bound for group in mesh.vertex_groups}
         rename = {}
         for source_bone in armature.data.bones:
             name = source_bone.name
-            if name in taken:
+            if name in existing:
                 base = armature.name + "_" + name
                 name = base
                 index = 2
@@ -837,7 +843,7 @@ def merge_accessory_armatures(main, meshes, report):
                 "name": rename[source_bone.name],
                 "head": armature.matrix_world @ source_bone.head_local,
                 "tail": armature.matrix_world @ source_bone.tail_local,
-                "x_axis": (armature.matrix_world.to_3x3() @ source_bone.x_axis).normalized(),
+                "z_axis": (armature.matrix_world.to_3x3() @ source_bone.z_axis).normalized(),
                 "parent": rename[source_bone.parent.name] if source_bone.parent else target,
                 "use_deform": source_bone.use_deform,
             })
@@ -846,7 +852,9 @@ def merge_accessory_armatures(main, meshes, report):
                 continue
             for group in mesh.vertex_groups:
                 renamed = rename.get(group.name)
-                if renamed and renamed != group.name and mesh.vertex_groups.get(renamed) is None:
+                if renamed and renamed != group.name:
+                    if mesh.vertex_groups.get(renamed) is not None:
+                        raise CapabilityError(mesh.name + ": follower skin group name collision: " + renamed)
                     group.name = renamed
             for modifier in mesh.modifiers:
                 if modifier.type == "ARMATURE" and modifier.object == armature:
@@ -867,7 +875,7 @@ def merge_accessory_armatures(main, meshes, report):
                 edit = main.data.edit_bones.new(spec["name"])
                 edit.head = inverse @ spec["head"]
                 edit.tail = inverse @ spec["tail"]
-                edit.align_roll(inverse_rotation @ spec["x_axis"])
+                edit.align_roll(inverse_rotation @ spec["z_axis"])
             for spec in specs:
                 edit = main.data.edit_bones[spec["name"]]
                 edit.use_connect = False
@@ -1555,6 +1563,23 @@ def material_uv_points(mesh, material, uv_name):
     return points
 
 
+def custom_surface_has_transparency(tree, seen=None):
+    """Detect alpha graphs that the appearance baker cannot preserve as an opaque map."""
+    seen = set() if seen is None else seen
+    if not tree or tree.as_pointer() in seen:
+        return False
+    seen.add(tree.as_pointer())
+    for node in tree.nodes:
+        if node.type in {"BSDF_TRANSPARENT", "HOLDOUT"}:
+            return True
+        alpha = node.inputs.get("Alpha") if node.type == "BSDF_PRINCIPLED" else None
+        if alpha is not None and (alpha.is_linked or alpha.default_value < .999):
+            return True
+        if node.type == "GROUP" and custom_surface_has_transparency(node.node_tree, seen):
+            return True
+    return False
+
+
 def bake_custom_surfaces(meshes, materials, size, report):
     """Bake the visible surface when a shader is not one Principled node.
 
@@ -1575,6 +1600,9 @@ def bake_custom_surfaces(meshes, materials, size, report):
             continue
         principals = [node for node in tree.nodes if node.type == "BSDF_PRINCIPLED"]
         if len(principals) == 1 and outputs[0].inputs["Surface"].links[0].from_node == principals[0]:
+            continue
+        if custom_surface_has_transparency(tree):
+            issue(report, "warning", "custom_surface_transparency", material.name + ": custom transparency needs an alpha-preserving shader conversion. The source graph was kept; inspect its Unity material rather than using an opaque appearance bake.")
             continue
         bound = [mesh for mesh in meshes if material in getattr(mesh.data, "materials", [])[:]]
         covered = [mesh for mesh in bound if mesh.data.uv_layers and material_uv_has_area(mesh, material)]
@@ -1706,6 +1734,19 @@ def bake_custom_surfaces(meshes, materials, size, report):
                     mesh.select_set(True)
                 bpy.context.view_layer.objects.active = bound[0]
                 images[label] = image
+                # Blender writes every selected material slot into its active image.
+                # Park the other slots so source textures and earlier bakes stay intact.
+                shields = []
+                shield_image = None
+                for other in {slot for mesh in bound for slot in mesh.data.materials if slot and slot != material and slot.node_tree}:
+                    other_tree = other.node_tree
+                    active = other_tree.nodes.active
+                    if shield_image is None:
+                        shield_image = bpy.data.images.new("AF_BakeShield", width=4, height=4, alpha=True)
+                    node = other_tree.nodes.new("ShaderNodeTexImage")
+                    node.image = shield_image
+                    other_tree.nodes.active = node
+                    shields.append((other_tree, node, active))
                 try:
                     options = {"type": bake_type, "use_clear": True, "margin": 16}
                     if bake_type == "NORMAL":
@@ -1716,6 +1757,11 @@ def bake_custom_surfaces(meshes, materials, size, report):
                         raise RuntimeError("Blender cancelled " + label + " bake")
                 finally:
                     tree.nodes.remove(target)
+                    for other_tree, node, active in shields:
+                        other_tree.nodes.remove(node)
+                        other_tree.nodes.active = active
+                    if shield_image is not None:
+                        bpy.data.images.remove(shield_image)
                 return image
 
             def release_unused(mapping):

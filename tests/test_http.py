@@ -26,7 +26,7 @@ class LoopbackBoundaryChecks(unittest.TestCase):
         cls.process.terminate()
         cls.process.communicate(timeout=10)
 
-    def post(self, method, token=None, origin=None, host=None):
+    def post(self, method, token=None, origin=None, host=None, data=b"{}", length=None):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
@@ -34,7 +34,9 @@ class LoopbackBoundaryChecks(unittest.TestCase):
             headers["Origin"] = origin
         if host:
             headers["Host"] = host
-        return urlopen(Request(self.base + "/api/" + method, data=b"{}", headers=headers), timeout=20)
+        if length is not None:
+            headers["Content-Length"] = str(length)
+        return urlopen(Request(self.base + "/api/" + method, data=data, headers=headers), timeout=20)
 
     def test_mutation_api_requires_session_token(self):
         with self.assertRaises(HTTPError) as error:
@@ -49,6 +51,17 @@ class LoopbackBoundaryChecks(unittest.TestCase):
             with self.assertRaises(HTTPError) as error:
                 self.post("jobs", self.token, **headers)
             self.assertEqual(error.exception.code, 403)
+            error.exception.close()
+
+    def test_owner_boundary_rejects_wrong_token_and_bad_payloads(self):
+        with self.assertRaises(HTTPError) as error:
+            self.post("scan", "wrong-token", data=b'{"source":"C:/Windows"}')
+        self.assertEqual(error.exception.code, 403)
+        error.exception.close()
+        for data, length in ((b"[]", None), (b"{invalid", None), (b"", 256 * 1024 + 1)):
+            with self.assertRaises(HTTPError) as error:
+                self.post("jobs", self.token, data=data, length=length)
+            self.assertEqual(error.exception.code, 400)
             error.exception.close()
 
     def test_actual_ui_assets_exist_and_have_security_headers(self):

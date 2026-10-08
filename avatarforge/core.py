@@ -19,29 +19,26 @@ FORMATS = {".blend", ".fbx", ".glb", ".gltf", ".obj", ".mdl", ".vmdl_c", ".smd",
 
 
 def local_path(value, root=None):
-    """Absolute local path. With root, the path must stay inside that folder.
+    """Canonical selected path, optionally contained in an owned folder.
 
-    Filesystem calls use only the returned string, after the prefix check.
+    Unbounded paths are selected by the local owner; this is not a sandbox.
+    Resolve links before checking containment, including Windows junctions.
     """
-    if not isinstance(value, (str, os.PathLike)):
+    if not isinstance(value, (str, os.PathLike)) or not isinstance(os.fspath(value), str):
         raise ValueError("path must be a string")
-    text = os.fspath(value)
-    if "\x00" in text:
+    if "\x00" in os.fspath(value):
         raise ValueError("path contains a null byte")
-    absolute = os.path.abspath(os.path.expanduser(text))
-    if root is None:
-        drive, _rest = os.path.splitdrive(absolute)
-        prefix = (drive + os.sep) if drive else os.sep
-        allowed_exact = prefix.rstrip(os.sep)
-        message = "path must be a local absolute path"
-    else:
-        base = os.path.abspath(os.path.expanduser(os.fspath(root)))
-        prefix = base if base.endswith(os.sep) else base + os.sep
-        allowed_exact = base
-        message = "path escapes the allowed folder"
-    if absolute != allowed_exact and not absolute.startswith(prefix):
-        raise ValueError(message)
+    absolute = str(Path(value).expanduser().resolve())
+    if root is not None:
+        base = str(Path(root).expanduser().resolve())
+        try:
+            contained = os.path.commonpath([os.path.normcase(absolute), os.path.normcase(base)]) == os.path.normcase(base)
+        except ValueError:
+            contained = False
+        if not contained:
+            raise ValueError("path escapes the allowed folder")
     return absolute
+
 PRESETS = {
     "preserve": {"label": "Preserve", "description": "Skip polygon reduction and texture downscaling. Keep the authored outfit state."},
     "balanced": {"label": "PC balanced", "description": "2K texture cap and safe mesh reduction. Keeps shape keys and secondary bones."},
@@ -247,7 +244,7 @@ def extract_zip(source, destination, max_bytes=8 * 1024 ** 3, max_files=50000):
             if key in seen and not info.is_dir():
                 raise ValueError("Archive contains duplicate file paths.")
             seen.add(key)
-            target_text = os.path.abspath(os.path.join(dest_prefix, name))
+            target_text = local_path(os.path.join(dest_prefix, name), root=destination)
             if not target_text.startswith(dest_prefix):
                 raise ValueError("Archive path leaves extraction folder.")
             planned.append((info, target_text))
@@ -258,8 +255,8 @@ def extract_zip(source, destination, max_bytes=8 * 1024 ** 3, max_files=50000):
                 os.makedirs(target_text, exist_ok=True)
                 continue
             os.makedirs(os.path.dirname(target_text), exist_ok=True)
-            with open(target_text, "wb") as handle:
-                handle.write(archive.read(info))
+            with archive.open(info) as source_file, open(target_text, "wb") as handle:
+                shutil.copyfileobj(source_file, handle, length=1024 * 1024)
     return scan(destination)
 
 

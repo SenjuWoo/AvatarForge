@@ -1,0 +1,11 @@
+# Owner-selected filesystem/executable paths are intentional in a desktop converter.
+# This is an authentication boundary, not a content/path sanitizer. This exact
+# helper verifies loopback, Host, Origin and a random session nonce before parsing.
+# No archive/model data, other request parser, local_path, or subprocess is modeled.
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["avatarforge.app", "Member[read_local_request].ReturnValue", "path-injection"]
+      - ["avatarforge.app", "Member[read_local_request].ReturnValue", "command-injection"]

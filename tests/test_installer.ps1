@@ -121,15 +121,15 @@ try {
         $captureChild=Join-Path $testRoot 'capture-certificate-child.ps1'
         $captureOutput=Join-Path $testRoot 'captured-certificate-setting.txt'
         [IO.File]::WriteAllText($captureChild,"param([string]`$Output)`n`$values=@([Environment]::GetEnvironmentVariable('DOTNET_GENERATE_ASPNET_CERTIFICATE','Process'),[Environment]::GetEnvironmentVariable('DOTNET_ADD_GLOBAL_TOOLS_TO_PATH','Process'),[Environment]::GetEnvironmentVariable('DOTNET_CLI_TELEMETRY_OPTOUT','Process'))`n[IO.File]::WriteAllLines(`$Output,`$values)`nexit 23`n")
-        Invoke-ScopedDotnet (Join-Path $PSHOME 'powershell.exe') @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
+        Invoke-ScopedDotnet (Get-Process -Id $PID).Path @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
         Assert-True ($LASTEXITCODE -eq 23) 'Guarded SDK invocation lost the child exit code.'
         Assert-True (([IO.File]::ReadAllLines($captureOutput) -join ',') -ceq 'false,false,true') 'A real child did not inherit all three first-use protections.'
         Assert-DotnetCallerRestored
         function Test-ThrowingDotnet { Assert-DotnetCertificateGuard; throw 'CERTIFICATE_GUARD_CHILD_FAILURE' }
         Assert-Throws { Invoke-ScopedDotnet Test-ThrowingDotnet @() } 'CERTIFICATE_GUARD_CHILD_FAILURE'
         Assert-DotnetCallerRestored
-        foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
-        Invoke-ScopedDotnet (Join-Path $PSHOME 'powershell.exe') @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
+        foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')}
+        Invoke-ScopedDotnet (Get-Process -Id $PID).Path @('-NoProfile','-NonInteractive','-File',$captureChild,$captureOutput)
         foreach($name in $callerSettings.Keys){Assert-True ($null -eq [Environment]::GetEnvironmentVariable($name,'Process')) "The guard retained a setting that was originally absent: $name"}
     }finally{
         foreach($name in $callerSettings.Keys){[Environment]::SetEnvironmentVariable($name,$previousSettings[$name],'Process')}

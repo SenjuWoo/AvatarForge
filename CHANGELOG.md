@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.8
+
+- Preserve truly absent SDK environment variables on PowerShell 7.5+ as well as Windows PowerShell 5.1; installer regression launches the actual host executable.
+
+- Keep Grok's broader rig naming, visible-surface baking, source-resolution presets and follower-rig support, with native regression repairs.
+- Shield every other material slot during custom-surface baking so source images, saved source graphs and earlier baked maps are not overwritten. Custom transparent/holdout surfaces retain their source graph and receive an explicit review item instead of being flattened into an opaque material.
+- Preserve follower joint orientation, required attachment targets and skin weights through bone/group name collisions. Missing attachment targets stop conversion instead of silently exporting detached geometry.
+- Validate actual imported Humanoid ancestry before calibration. Complete names with disconnected limb chains retain a Generic prefab and preview scene with a repair report, including Mimi-style mechanical hip rigs.
+- Apply toon-outline unit compensation only to fully weighted leaf skinned renderers with separate valid bones. Bone-less blendshape meshes and renderer-parented bones retain their geometry and report the outline review needed.
+- Restore canonical, case-insensitive Windows path containment across junctions and stream ZIP members instead of allocating a complete member in memory. Preserve pasted/AI-selected file paths and network shares for the authenticated desktop owner.
+- Describe the loopback session authentication boundary in CodeQL without disabling security queries or trusting downloaded archive/model contents. Add real request, native FBX, posed skin/morph geometry and saved Generic import regressions.
+
 ## 0.2.7
 
 - Rank the weighted joint above a deform bone whose name says armor, outfit, or weapon. A preferred DEF- armor thigh was winning the upper-leg slot and skipping generated-hierarchy repair, so Unity rejected the Humanoid T-pose.

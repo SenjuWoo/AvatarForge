@@ -168,9 +168,9 @@ namespace AvatarForge.Editor
                 var model = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
                 if (!model) throw new InvalidDataException("Unity could not import model.fbx.");
                 var transforms = model.GetComponentsInChildren<Transform>(true);
-                var mapping = BuildHumanMap(source, transforms, issues, out string[] missing);
+                var mapping = BuildHumanMap(source, transforms, issues, out string[] missing, out bool hierarchyCompatible);
                 output.missing_required_humanoid = missing;
-                if (missing.Length == 0)
+                if (missing.Length == 0 && hierarchyCompatible)
                 {
                     var description = importer.humanDescription;
                     description.human = mapping;
@@ -212,7 +212,7 @@ namespace AvatarForge.Editor
                 output.humanoid_valid = avatar && avatar.isValid;
                 output.humanoid_human = avatar && avatar.isHuman;
                 if (!output.humanoid_valid || !output.humanoid_human)
-                    AddIssue(issues, missing.Length > 0 ? "review" : "error", "HUMANOID_INVALID", "The imported Avatar is not a valid Humanoid. Generic preview retains all bones; tracked Humanoid motion requires a compatible mapping and rest pose.");
+                    AddIssue(issues, missing.Length > 0 || !hierarchyCompatible ? "review" : "error", "HUMANOID_INVALID", "The imported Avatar is not a valid Humanoid. Generic preview retains all bones; tracked Humanoid motion requires a compatible mapping and rest pose.");
                 VerifyBones(source, instance, output, issues);
                 VerifyShapeKeys(source, instance, output, issues);
                 VerifySkinWeights(source, instance, output, issues);
@@ -315,7 +315,7 @@ namespace AvatarForge.Editor
             return File.Exists(path) ? JsonUtility.FromJson<PhysicsApproval>(File.ReadAllText(ResolveContainedFile(input, "unity-overrides.json"))) ?? new PhysicsApproval() : null;
         }
 
-        static HumanBone[] BuildHumanMap(ConversionReport source, Transform[] transforms, List<ConversionIssue> issues, out string[] missing)
+        static HumanBone[] BuildHumanMap(ConversionReport source, Transform[] transforms, List<ConversionIssue> issues, out string[] missing, out bool hierarchyCompatible)
         {
             var names = HumanTrait.BoneName.ToDictionary(n => n.Replace(" ", ""), n => n, StringComparer.Ordinal);
             var transformNames = transforms.GroupBy(x => x.name).ToDictionary(g => g.Key, g => g.Count());
@@ -336,6 +336,16 @@ namespace AvatarForge.Editor
             string[] required = HumanTrait.BoneName.Where((n, i) => HumanTrait.RequiredBone(i)).ToArray();
             missing = required.Where(n => !assignedHumans.Contains(n)).ToArray();
             if (missing.Length > 0) AddIssue(issues, "review", "MISSING_REQUIRED_HUMANOID", "Generic rig retained; missing required Humanoid bones: " + string.Join(", ", missing));
+            hierarchyCompatible = true;
+            var byHuman = mapped.ToDictionary(bone => bone.humanName, bone => transforms.Single(transform => transform.name == bone.boneName));
+            foreach (var bone in mapped)
+            {
+                int parent = HumanTrait.GetParentBone(Array.IndexOf(HumanTrait.BoneName, bone.humanName));
+                while (parent >= 0 && !byHuman.ContainsKey(HumanTrait.BoneName[parent])) parent = HumanTrait.GetParentBone(parent);
+                if (parent < 0 || byHuman[bone.humanName].IsChildOf(byHuman[HumanTrait.BoneName[parent]])) continue;
+                hierarchyCompatible = false;
+                AddIssue(issues, "review", "HUMANOID_HIERARCHY", "Generic rig retained: mapped " + bone.humanName + " (" + bone.boneName + ") is not below " + HumanTrait.BoneName[parent] + ". Bone names alone cannot make a disconnected chain track as Humanoid; repair the mapping or hierarchy, then reimport.");
+            }
             return mapped.ToArray();
         }
 
@@ -411,11 +421,14 @@ namespace AvatarForge.Editor
         // lilToon extrudes outlines in object space before the model matrix. FBX_SCALE_NONE
         // leaves a centimeter unit factor on the armature and on skinned renderers. Dividing
         // only those renderer scales keeps world size (skinning rewrites object-space vertices)
-        // and stops the outline from being multiplied. Static meshes and bone transforms stay.
+        // and stops the outline from being multiplied. This is safe only for fully weighted
+        // leaf renderers with a separate root bone; blendshape-only geometry and child bones
+        // would move with the renderer transform, so keep their original scale.
         static void CompensateRendererUnitScale(GameObject instance, List<ConversionIssue> issues)
         {
             var renderers = instance.GetComponentsInChildren<Renderer>(true);
             var rendererTransforms = new HashSet<Transform>(renderers.Select(renderer => renderer.transform));
+            var boneTransforms = new HashSet<Transform>(renderers.OfType<SkinnedMeshRenderer>().SelectMany(renderer => renderer.bones.Concat(new[] { renderer.rootBone })).Where(bone => bone));
             Transform armature = null;
             int bestChildren = 0;
             foreach (var transform in instance.GetComponentsInChildren<Transform>(true))
@@ -433,7 +446,7 @@ namespace AvatarForge.Editor
             int changed = 0;
             foreach (var renderer in renderers)
             {
-                if (!(renderer is SkinnedMeshRenderer)) continue;
+                if (!(renderer is SkinnedMeshRenderer skinned) || !skinned.sharedMesh) continue;
                 Transform transform = renderer.transform;
                 Vector3 scale = transform.localScale;
                 Vector3 next = scale;
@@ -442,6 +455,14 @@ namespace AvatarForge.Editor
                 if (Mathf.Abs(scale.y) >= unit * 0.5f) { next.y = scale.y / unit; any = true; }
                 if (Mathf.Abs(scale.z) >= unit * 0.5f) { next.z = scale.z / unit; any = true; }
                 if (!any || next == scale) continue;
+                bool fullyWeighted;
+                using (var counts = skinned.sharedMesh.GetBonesPerVertex())
+                    fullyWeighted = counts.Length == skinned.sharedMesh.vertexCount && counts.All(count => count > 0);
+                if (!skinned.rootBone || boneTransforms.Contains(transform) || transform.childCount > 0 || skinned.bones.Length == 0 || skinned.bones.Any(bone => !bone) || !fullyWeighted)
+                {
+                    AddIssue(issues, "review", "RENDERER_UNIT_SCALE_REVIEW", "Preserved " + renderer.name + " renderer scale because it has unweighted geometry, no separate root bone, or child transforms. Changing it could shrink geometry or move bones; review object-space toon outline width manually.");
+                    continue;
+                }
                 transform.localScale = next;
                 changed++;
             }
@@ -912,28 +933,55 @@ namespace AvatarForge.Editor
                         var bone = new GameObject("bone" + index);
                         bone.transform.SetParent(armature.transform, false);
                     }
-                    var body = new GameObject("Body");
-                    body.transform.SetParent(avatar.transform, false);
-                    body.transform.localScale = new Vector3(100f, 100f, 100f);
-                    body.AddComponent<SkinnedMeshRenderer>();
-                    var mirror = new GameObject("Mirror");
-                    mirror.transform.SetParent(avatar.transform, false);
-                    mirror.transform.localScale = new Vector3(-100f, 100f, 100f);
-                    mirror.AddComponent<SkinnedMeshRenderer>();
-                    var partial = new GameObject("Partial");
-                    partial.transform.SetParent(avatar.transform, false);
-                    partial.transform.localScale = new Vector3(100f, 1f, 100f);
-                    partial.AddComponent<SkinnedMeshRenderer>();
-                    var aqua = new GameObject("Aqua");
-                    aqua.transform.SetParent(avatar.transform, false);
-                    aqua.transform.localScale = new Vector3(85.6f, 86f, 100f);
-                    aqua.AddComponent<SkinnedMeshRenderer>();
-                    var small = new GameObject("Small");
-                    small.transform.SetParent(avatar.transform, false);
-                    small.AddComponent<SkinnedMeshRenderer>();
+                    Transform skinBone = armature.transform.GetChild(0);
+                    SkinnedMeshRenderer CheckMesh(string name, Vector3 scale, Transform parent, bool weighted = true)
+                    {
+                        var part = new GameObject(name);
+                        part.transform.SetParent(parent, false);
+                        part.transform.localScale = scale;
+                        var mesh = new Mesh { name = name };
+                        mesh.vertices = new[] { new Vector3(-0.01f, 0, 0), new Vector3(0.01f, 0, 0), new Vector3(0, 0.02f, 0) };
+                        mesh.triangles = new[] { 0, 1, 2 };
+                        mesh.RecalculateNormals();
+                        mesh.RecalculateBounds();
+                        mesh.AddBlendShapeFrame("Morph", 100, Enumerable.Repeat(new Vector3(0, 0, 0.004f), 3).ToArray(), new Vector3[3], new Vector3[3]);
+                        var skinned = part.AddComponent<SkinnedMeshRenderer>();
+                        skinned.sharedMesh = mesh;
+                        skinned.localBounds = mesh.bounds;
+                        skinned.SetBlendShapeWeight(0, 75);
+                        if (weighted)
+                        {
+                            mesh.bindposes = new[] { skinBone.worldToLocalMatrix * part.transform.localToWorldMatrix };
+                            mesh.boneWeights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1 }, 3).ToArray();
+                            skinned.bones = new[] { skinBone };
+                            skinned.rootBone = skinBone;
+                        }
+                        return skinned;
+                    }
+                    Vector3[] WorldVertices(SkinnedMeshRenderer renderer)
+                    {
+                        var baked = new Mesh();
+                        try { renderer.BakeMesh(baked, true); return baked.vertices.Select(renderer.transform.TransformPoint).ToArray(); }
+                        finally { UnityEngine.Object.DestroyImmediate(baked); }
+                    }
+                    var body = CheckMesh("Body", Vector3.one * 100, avatar.transform);
+                    var mirror = CheckMesh("Mirror", new Vector3(-100, 100, 100), avatar.transform);
+                    var partial = CheckMesh("Partial", new Vector3(100, 1, 100), avatar.transform);
+                    var aqua = CheckMesh("Aqua", new Vector3(85.6f, 86, 100), avatar.transform);
+                    var small = CheckMesh("Small", Vector3.one, avatar.transform);
+                    var child = CheckMesh("ArmatureChild", Vector3.one * 100, armature.transform);
+                    var blendOnly = CheckMesh("BlendOnly", Vector3.one * 100, avatar.transform, false);
+                    var rootless = CheckMesh("Rootless", Vector3.one * 100, avatar.transform);
+                    rootless.rootBone = null;
+                    var nested = CheckMesh("NestedBones", Vector3.one * 100, avatar.transform);
+                    var nestedBone = new GameObject("NestedBone");
+                    nestedBone.transform.SetParent(nested.transform, false);
+                    nested.bones = new[] { nestedBone.transform };
+                    nested.rootBone = nestedBone.transform;
+                    nested.sharedMesh.bindposes = new[] { nestedBone.transform.worldToLocalMatrix * nested.transform.localToWorldMatrix };
                     var staticMesh = new GameObject("Static");
                     staticMesh.transform.SetParent(avatar.transform, false);
-                    staticMesh.transform.localScale = new Vector3(100f, 100f, 100f);
+                    staticMesh.transform.localScale = Vector3.one * 100;
                     staticMesh.AddComponent<MeshRenderer>();
                     var hidden = new GameObject("HiddenOption");
                     hidden.transform.SetParent(avatar.transform, false);
@@ -941,15 +989,44 @@ namespace AvatarForge.Editor
                     var issues = new List<ConversionIssue>();
                     ApplyOptionalParts(report, avatar, issues);
                     if (hidden.GetComponent<Renderer>().enabled) throw new Exception("Hidden optional part stayed enabled.");
+                    skinBone.localRotation = Quaternion.Euler(0, 0, 20);
+                    var checkedMeshes = new[] { body, mirror, partial, aqua, small, child, blendOnly, rootless, nested };
+                    var before = checkedMeshes.Select(WorldVertices).ToArray();
+                    var beforeBounds = checkedMeshes.Select(renderer => renderer.bounds).ToArray();
                     CompensateRendererUnitScale(avatar, issues);
-                    if (armature.transform.localScale != new Vector3(100f, 100f, 100f)) throw new Exception("Armature scale changed.");
-                    if (body.transform.localScale != Vector3.one) throw new Exception("Body scale was not compensated.");
-                    if (mirror.transform.localScale != new Vector3(-1f, 1f, 1f)) throw new Exception("Mirrored scale lost its sign.");
-                    if (partial.transform.localScale != new Vector3(1f, 1f, 1f)) throw new Exception("Partial unit scale was wrong.");
-                    if (!Mathf.Approximately(aqua.transform.localScale.x, 0.856f) || !Mathf.Approximately(aqua.transform.localScale.y, 0.86f) || !Mathf.Approximately(aqua.transform.localScale.z, 1f)) throw new Exception("Non-uniform renderer scale was wrong.");
-                    if (small.transform.localScale != Vector3.one || staticMesh.transform.localScale != new Vector3(100f, 100f, 100f)) throw new Exception("Scale-1 or static meshes were changed.");
-                    if (!issues.Any(issue => issue.code == "RENDERER_UNIT_SCALE" && issue.severity == "info")) throw new Exception("Renderer scale compensation was not reported.");
+                    for (int mesh = 0; mesh < checkedMeshes.Length; mesh++)
+                    {
+                        var renderer = checkedMeshes[mesh];
+                        var after = WorldVertices(renderer);
+                        for (int vertex = 0; vertex < after.Length; vertex++)
+                            if (Vector3.Distance(before[mesh][vertex], after[vertex]) > 0.0001f) throw new Exception(renderer.name + " scaled its skinned/blendshape geometry.");
+                        if (Vector3.Distance(beforeBounds[mesh].center, renderer.bounds.center) > 0.0001f || Vector3.Distance(beforeBounds[mesh].size, renderer.bounds.size) > 0.0001f) throw new Exception(renderer.name + " changed its culling bounds.");
+                    }
+                    if (armature.transform.localScale != Vector3.one * 100) throw new Exception("Armature scale changed.");
+                    if (body.transform.localScale != Vector3.one || child.transform.localScale != Vector3.one) throw new Exception("Weighted renderer scale was not compensated.");
+                    if (mirror.transform.localScale != new Vector3(-1, 1, 1)) throw new Exception("Mirrored scale lost its sign.");
+                    if (partial.transform.localScale != Vector3.one) throw new Exception("Partial unit scale was wrong.");
+                    if (!Mathf.Approximately(aqua.transform.localScale.x, 0.856f) || !Mathf.Approximately(aqua.transform.localScale.y, 0.86f) || !Mathf.Approximately(aqua.transform.localScale.z, 1)) throw new Exception("Non-uniform renderer scale was wrong.");
+                    if (small.transform.localScale != Vector3.one || staticMesh.transform.localScale != Vector3.one * 100 || blendOnly.transform.localScale != Vector3.one * 100 || rootless.transform.localScale != Vector3.one * 100 || nested.transform.localScale != Vector3.one * 100) throw new Exception("Unsafe or static renderer scale changed.");
+                    if (!issues.Any(issue => issue.code == "RENDERER_UNIT_SCALE" && issue.severity == "info") || issues.Count(issue => issue.code == "RENDERER_UNIT_SCALE_REVIEW") != 3) throw new Exception("Renderer scale checks were not reported.");
                     ApplyOptionalParts(new ConversionReport(), avatar, issues);
+                    foreach (var renderer in checkedMeshes) UnityEngine.Object.DestroyImmediate(renderer.sharedMesh);
+
+                    var humanNames = HumanTrait.BoneName.Where((name, index) => HumanTrait.RequiredBone(index)).ToHashSet();
+                    var humanTransforms = humanNames.ToDictionary(name => name, name => new GameObject(name).transform);
+                    foreach (var entry in humanTransforms)
+                    {
+                        int parent = HumanTrait.GetParentBone(Array.IndexOf(HumanTrait.BoneName, entry.Key));
+                        while (parent >= 0 && !humanNames.Contains(HumanTrait.BoneName[parent])) parent = HumanTrait.GetParentBone(parent);
+                        entry.Value.SetParent(parent >= 0 ? humanTransforms[HumanTrait.BoneName[parent]] : avatar.transform, false);
+                    }
+                    var mappedReport = new ConversionReport { humanoid = humanNames.Select(name => new Mapping { humanName = name.Replace(" ", ""), boneName = name, confidence = 1 }).ToArray() };
+                    BuildHumanMap(mappedReport, avatar.GetComponentsInChildren<Transform>(true), issues, out string[] missing, out bool hierarchyCompatible);
+                    if (missing.Length != 0 || !hierarchyCompatible) throw new Exception("Connected required Humanoid chain was rejected.");
+                    string lowerLeg = HumanTrait.BoneName[(int)HumanBodyBones.LeftLowerLeg];
+                    humanTransforms[lowerLeg].SetParent(humanTransforms["Hips"], false);
+                    BuildHumanMap(mappedReport, avatar.GetComponentsInChildren<Transform>(true), issues, out missing, out hierarchyCompatible);
+                    if (missing.Length != 0 || hierarchyCompatible || !issues.Any(issue => issue.code == "HUMANOID_HIERARCHY" && issue.severity == "review")) throw new Exception("Disconnected named Humanoid chain was accepted.");
                 }
                 finally { UnityEngine.Object.DestroyImmediate(avatar); }
                 bool rejected = false;
