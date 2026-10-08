@@ -31,6 +31,6 @@ jobs:
         env:
           # Load the exact authenticated desktop boundary; retain every default query.
           CODEQL_ACTION_EXTRA_OPTIONS: >-
-            {"database":{"run-queries":["--search-path=${{ github.workspace }}/.github/codeql/extensions","--model-packs=senjuwoo/avatarforge-desktop-authority"],"interpret-results":["--search-path=${{ github.workspace }}/.github/codeql/extensions","--model-packs=senjuwoo/avatarforge-desktop-authority"]}}
+            {"database":{"run-queries":["--additional-packs=${{ github.workspace }}/.github/codeql/extensions/desktop-authority","--model-packs=senjuwoo/avatarforge-desktop-authority"],"interpret-results":["--additional-packs=${{ github.workspace }}/.github/codeql/extensions/desktop-authority","--model-packs=senjuwoo/avatarforge-desktop-authority"]}}
         with:
           category: /language:python
