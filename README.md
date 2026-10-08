@@ -54,7 +54,7 @@ Supported Blender shaders bake automatically on the local CPU. A surface that is
 
 ## Downloads it is meant to open
 
-Gallery sites are sources, not file formats. SmutBase and SFMLab packs are usually Blender, FBX, Source, or a ZIP of those. XNALara galleries publish `.xps`, `.mesh`, and `.ascii`. MMD and Booth models are `.pmx` or `.pmd`. VRoid and similar tools publish `.vrm`. DAZ and game rips often arrive as a Blender file with a generated control rig. AvatarForge picks the importer from the file you select. A ZIP is extracted into a new folder so a pack with several models does not silently convert the wrong one.
+Gallery sites are sources, not file formats. SmutBase and SFMLab packs are usually Blender, FBX, Source, or a ZIP of those. XNALara galleries publish `.xps`, `.mesh`, and `.ascii`. MMD models use `.pmx` or `.pmd`. Store packs can include Blender/FBX sources or an existing Unity package; use an existing Unity package in its intended project rather than treating the store name as a model format. VRoid and similar tools publish `.vrm`. DAZ and game rips often arrive as a Blender file with a generated control rig. AvatarForge picks the importer from the file you select. A ZIP is extracted into a new folder so a pack with several models does not silently convert the wrong one.
 
 Unrigged meshes import and export. They need an armature and skin weights before a Humanoid avatar can be validated. AvatarForge does not invent a humanoid rig for arbitrary geometry.
 

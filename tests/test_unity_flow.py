@@ -22,7 +22,7 @@ class ToolSelectionChecks(unittest.TestCase):
                 path.parent.mkdir()
                 path.write_bytes(b"generated version fixture; never executed")
             environment = {k: v for k, v in os.environ.items() if k not in {"AVATARFORGE_BLENDER", "BLENDER_PATH"}}
-            versions = {str(older): (4, 5, 0), str(modern): (5, 2, 2)}
+            versions = {str(older.resolve()): (4, 5, 0), str(modern.resolve()): (5, 2, 2)}
             with patch.object(core, "ROOT", root), patch.dict(os.environ, environment, clear=True), \
                  patch.object(core, "_windows_process_paths", return_value=[str(older), str(modern)]), \
                  patch.object(core.shutil, "which", return_value=None), \
