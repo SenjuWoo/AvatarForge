@@ -16,7 +16,7 @@ import webbrowser
 
 from . import __version__
 from avatarforge.authority import local_request_authorized, read_local_request
-from .core import ROOT, Jobs, PRESETS, doctor, scan, extract_zip, prepare_unity, read_json, write_json, run_owned
+from .core import ROOT, Jobs, PRESETS, doctor, scan, extract_zip, prepare_unity, read_json, write_json, run_owned, approve_physics, unity_environment
 
 
 class Service:
@@ -88,9 +88,7 @@ class Service:
             job = self.jobs.get(args["id"])
             if job["state"] != "complete":
                 raise ValueError("Finish conversion before preparing Unity.")
-            if "approved_physics" in args:
-                self.invoke("approve_physics", {"id": args["id"], "bones": args["approved_physics"]})
-            return self.action("Prepare Unity", lambda: prepare_unity(job["output"], args.get("project")))
+            return self.action("Prepare Unity", lambda: prepare_unity(job["output"], args.get("project"), args.get("approved_physics")))
         if method == "action":
             with self.lock:
                 if args["id"] not in self.actions:
@@ -98,13 +96,7 @@ class Service:
                 return dict(self.actions[args["id"]])
         if method == "approve_physics":
             job = self.jobs.get(args["id"])
-            report = read_json(Path(job["output"]) / "report.json")
-            allowed = {p["bone"] for p in report.get("physics", [])}
-            bones = args.get("bones", [])
-            if not isinstance(bones, list) or any(b not in allowed for b in bones):
-                raise ValueError("Choose only roots suggested by this conversion.")
-            write_json(Path(job["output"]) / "unity-overrides.json", {"approved_physics": bones})
-            return {"approved": bones}
+            return approve_physics(job["output"], args.get("bones", []))
         if method == "open":
             job = self.jobs.get(args["id"])
             kind = args.get("kind", "folder")
@@ -125,7 +117,7 @@ class Service:
                 report = job.get("unity_report") or {}
                 if report.get("scene"):
                     command.extend(["-executeMethod", "AvatarForge.Editor.AvatarForgeImporter.OpenPreparedScene", "-avatarForgeInput", str(folder)])
-                subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, env=unity_environment())
             elif kind == "folder":
                 if os.name == "nt":
                     os.startfile(folder)

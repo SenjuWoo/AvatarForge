@@ -2,8 +2,10 @@
 
 ## 0.2.8
 
+- Ignore source-selected projection/cage bake settings during per-surface conversion. Multi-mesh materials no longer bake only onto the active object, which produced transparent arms and legs on Mimi.
+- Restore the missing Windows profile location for Unity Package Manager in filtered AI/MCP child environments; interactive Open Unity uses the same recovery without changing parent settings.
+- Serialize each conversion's Unity setup, reports and physics approvals across separate AI clients. A conflicting request reports that preparation is already running, and operating-system locks release when a worker exits.
 - Preserve truly absent SDK environment variables on PowerShell 7.5+ as well as Windows PowerShell 5.1; installer regression launches the actual host executable.
-
 - Keep Grok's broader rig naming, visible-surface baking, source-resolution presets and follower-rig support, with native regression repairs.
 - Shield every other material slot during custom-surface baking so source images, saved source graphs and earlier baked maps are not overwritten. Custom transparent/holdout surfaces retain their source graph and receive an explicit review item instead of being flattened into an opaque material.
 - Preserve follower joint orientation, required attachment targets and skin weights through bone/group name collisions. Missing attachment targets stop conversion instead of silently exporting detached geometry.

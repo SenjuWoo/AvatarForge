@@ -35,6 +35,21 @@ class ToolSelectionChecks(unittest.TestCase):
                     self.assertIsNone(core.discover_tool("blender"))
 
 
+class UnityEnvironmentChecks(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows Package Manager environment")
+    def test_missing_allusersprofile_is_recovered_without_changing_parent(self):
+        with patch.dict(os.environ, {"PROGRAMDATA": "generated-programdata"}, clear=True):
+            self.assertEqual(core.unity_environment()["ALLUSERSPROFILE"], "generated-programdata")
+            self.assertNotIn("ALLUSERSPROFILE", os.environ)
+            with patch.dict(os.environ, {"ALLUSERSPROFILE": "selected-profile"}):
+                self.assertEqual(core.unity_environment()["ALLUSERSPROFILE"], "selected-profile")
+        environment = {key: value for key, value in os.environ.items() if key not in {"ALLUSERSPROFILE", "PROGRAMDATA"}}
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertTrue(Path(core.unity_environment()["ALLUSERSPROFILE"]).is_dir())
+            self.assertNotIn("ALLUSERSPROFILE", os.environ)
+            self.assertNotIn("PROGRAMDATA", os.environ)
+
+
 class UnityFailureChecks(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="AvatarForgeUnityFlow-")
@@ -57,7 +72,7 @@ class UnityFailureChecks(unittest.TestCase):
         self.project = self.root / "new-unity"
         self.calls = []
 
-    def prepare(self, exit_code=2, verdict="blocked", save_assets=True, timeout=False):
+    def prepare(self, exit_code=2, verdict="blocked", save_assets=True, timeout=False, approved_physics=None):
         def child(args, **kwargs):
             self.calls.append(args)
             if len(args) > 1 and args[1] == "new":
@@ -84,7 +99,42 @@ class UnityFailureChecks(unittest.TestCase):
                 return subprocess.CompletedProcess(args, exit_code)
             return subprocess.CompletedProcess(args, 0)
         with patch.object(core, "ROOT", self.root), patch.object(core, "discover_tool", return_value="generated-Unity.exe"), patch.object(core, "run_owned", side_effect=child):
-            return core.prepare_unity(self.folder, self.project)
+            return core.prepare_unity(self.folder, self.project, approved_physics)
+
+    def test_other_client_cannot_prepare_or_change_approval_and_exit_releases_lock(self):
+        core.write_json(self.folder / "unity-overrides.json", {"approved_physics": ["Breast.L"]})
+        script = (
+            "import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+            "from avatarforge.core import _unity_preparation_lock; "
+            "lock=_unity_preparation_lock(Path(sys.argv[2])); lock.__enter__(); "
+            "print('LOCKED',flush=True); sys.stdin.read()"
+        )
+        child = subprocess.Popen([sys.executable, "-c", script, str(Path(core.__file__).resolve().parents[1]), str(self.folder)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "LOCKED")
+            with self.assertRaisesRegex(ValueError, "already running"):
+                self.prepare(approved_physics=[])
+            with self.assertRaisesRegex(ValueError, "already running"):
+                core.approve_physics(self.folder, [])
+            self.assertEqual(self.calls, [])
+            self.assertEqual(core.read_json(self.folder / "unity-overrides.json"), {"approved_physics": ["Breast.L"]})
+        finally:
+            child.terminate()
+            child.communicate(timeout=15)
+        self.prepare(exit_code=0, verdict="needs_review", approved_physics=[])
+        self.assertEqual(core.read_json(self.folder / "unity-overrides.json"), {"approved_physics": []})
+
+    def test_approval_none_preserves_selection_and_empty_list_clears_it(self):
+        core.write_json(self.folder / "report.json", {"schema_version": 1, "preset": "preserve", "physics": [{"bone": "Breast.L"}]})
+        core.approve_physics(self.folder, ["Breast.L"])
+        self.prepare(exit_code=0, verdict="needs_review")
+        self.assertEqual(core.read_json(self.folder / "unity-overrides.json"), {"approved_physics": ["Breast.L"]})
+        with self.assertRaisesRegex(ValueError, "only roots suggested"):
+            core.approve_physics(self.folder, ["unknown"])
+        self.assertEqual(core.read_json(self.folder / "unity-overrides.json"), {"approved_physics": ["Breast.L"]})
+        core.approve_physics(self.folder, [])
+        self.assertEqual(core.read_json(self.folder / "unity-overrides.json"), {"approved_physics": []})
 
     def test_blocked_import_keeps_project_report_and_plain_editor_open(self):
         with self.assertRaisesRegex(RuntimeError, "exit 2"):
@@ -99,6 +149,7 @@ class UnityFailureChecks(unittest.TestCase):
         with patch.object(core, "discover_tool", return_value="generated-Unity.exe"), patch("avatarforge.app.subprocess.Popen") as editor:
             self.assertEqual(service.invoke("open", {"id": "completed", "kind": "unity"}), {"opened": "unity"})
             self.assertEqual(editor.call_args.args[0], ["generated-Unity.exe", "-projectPath", str(self.project)])
+            self.assertEqual(editor.call_args.kwargs["env"], core.unity_environment())
         self.assertEqual({args[3] for args in self.calls if len(args) > 3 and args[1:3] == ["add", "package"]},
                          {"com.vrchat.base@" + self.sdk_version, "com.vrchat.avatars@" + self.sdk_version})
 

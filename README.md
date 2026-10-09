@@ -15,7 +15,7 @@ Keep the application in its own folder, outside AI skill directories. **Connect 
 
 ![AvatarForge Connect AI panel with client selection and optional project scope](docs/ai-connect.jpg)
 
-Connect AI checks the local server and preserves your existing client settings. Client activation is verified after its restart or reload.
+Connect AI checks the local server and preserves your existing client settings. Client activation is verified after its restart or reload. After updating AvatarForge, close its interface and start it again; reload or restart connected AI clients so their local server loads the updated engine.
 
 ## The normal workflow
 

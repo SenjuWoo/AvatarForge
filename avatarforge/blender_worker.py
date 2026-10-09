@@ -1396,7 +1396,8 @@ def bake_materials(meshes, materials, size, report):
                     mesh.hide_viewport = mesh.hide_render = False
                     mesh.select_set(True)
                 bpy.context.view_layer.objects.active = bake_meshes[0]
-                result = bpy.ops.object.bake(type="NORMAL" if channel == "normal" else "EMIT", normal_space="TANGENT", use_clear=False, margin=8)
+                result = bpy.ops.object.bake(type="NORMAL" if channel == "normal" else "EMIT", normal_space="TANGENT",
+                                             use_selected_to_active=False, use_cage=False, use_clear=False, margin=8)
                 if "FINISHED" not in result:
                     raise RuntimeError("Blender cancelled " + channel + " bake")
                 print("AVATARFORGE_BAKE " + channel, flush=True)
@@ -1748,7 +1749,7 @@ def bake_custom_surfaces(meshes, materials, size, report):
                     other_tree.nodes.active = node
                     shields.append((other_tree, node, active))
                 try:
-                    options = {"type": bake_type, "use_clear": True, "margin": 16}
+                    options = {"type": bake_type, "use_selected_to_active": False, "use_cage": False, "use_clear": True, "margin": 16}
                     if bake_type == "NORMAL":
                         options["normal_space"] = "TANGENT"
                     options.update(extra)

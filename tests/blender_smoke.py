@@ -263,6 +263,8 @@ def custom_surface_regressions():
         sources.append(source)
         pixels.append(tuple(source.pixels[:]))
     data.polygons[1].material_index = 1
+    bpy.context.scene.render.bake.use_selected_to_active = True
+    bpy.context.scene.render.bake.use_cage = True
     report = {"issues": []}
     bake_custom_surfaces([mesh], materials, 64, report)
     assert len(report.get("baked_materials", [])) == 2, report["issues"]
@@ -510,6 +512,9 @@ def main():
     material.node_tree.nodes.get("Principled BSDF").inputs["Base Color"].default_value = (0, 1, 0, 1)
     clone.data.materials.clear()
     clone.data.materials.append(material)
+    # Source baking UI settings must not turn the batch into a projection onto one mesh.
+    bpy.context.scene.render.bake.use_selected_to_active = True
+    bpy.context.scene.render.bake.use_cage = True
     bpy.ops.wm.save_as_mainfile(filepath=str(source))
     result = run({"source": str(source), "output": str(folder / "fixture-batch-baked"), "preset": "balanced",
                   "options": {"preview": False, "bake_materials": True, "bake_size": 64}})
@@ -1109,7 +1114,7 @@ def main():
     custom_surface_regressions()
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
-    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True, "integer_vector_custom_properties": True, "unselectable_mesh_exported": True}))
+    print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "inherited_bake_settings_ignored": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True, "integer_vector_custom_properties": True, "unselectable_mesh_exported": True}))
 
 
 if __name__ == "__main__":

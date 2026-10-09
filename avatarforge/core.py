@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
+import errno
 import hashlib
 import json
 import os
@@ -455,11 +457,71 @@ class Jobs:
                 thread.join(timeout=max(0, deadline - time.monotonic()))
 
 
-def prepare_unity(input_folder, project=None):
-    """Create a fresh SDK project through official VPM; never overwrite an existing one."""
+def unity_environment():
+    """Restore Windows' UPM profile path when an AI host filters its environment."""
+    environment = os.environ.copy()
+    if os.name == "nt" and not environment.get("ALLUSERSPROFILE"):
+        path = environment.get("PROGRAMDATA")
+        if not path:
+            import ctypes
+            buffer = ctypes.create_unicode_buffer(260)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 0x23, None, 0, buffer):  # CSIDL_COMMON_APPDATA
+                raise ValueError("Windows could not locate ProgramData for Unity Package Manager.")
+            path = buffer.value
+        environment["ALLUSERSPROFILE"] = path
+    return environment
+
+
+@contextmanager
+def _unity_preparation_lock(folder):
+    # The OS releases this lock if an AI client or worker exits unexpectedly.
+    with (Path(folder) / ".unity-prepare.lock").open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            if lock.seek(0, os.SEEK_END) == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            acquire = lambda: msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            acquire = lambda: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            acquire()
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise ValueError("Unity preparation is already running for this conversion.") from error
+            raise
+        yield
+
+
+def _write_physics_approval(folder, bones):
+    report = read_json(folder / "report.json")
+    allowed = {p["bone"] for p in report.get("physics", [])}
+    if not isinstance(bones, list) or any(b not in allowed for b in bones):
+        raise ValueError("Choose only roots suggested by this conversion.")
+    write_json(folder / "unity-overrides.json", {"approved_physics": bones})
+    return {"approved": bones}
+
+
+def approve_physics(input_folder, bones):
+    folder = Path(input_folder).resolve()
+    with _unity_preparation_lock(folder):
+        return _write_physics_approval(folder, bones)
+
+
+def prepare_unity(input_folder, project=None, approved_physics=None):
+    """Create a fresh SDK project; serialize its conversion's mutable handoff files."""
     folder = Path(input_folder).resolve()
     if not (folder / "model.fbx").is_file() or not (folder / "report.json").is_file():
         raise ValueError("Choose a completed conversion folder.")
+    with _unity_preparation_lock(folder):
+        if approved_physics is not None:
+            _write_physics_approval(folder, approved_physics)
+        return _prepare_unity(folder, project)
+
+
+def _prepare_unity(folder, project):
     executable = discover_tool("unity")
     if not executable:
         raise ValueError(f"Install Unity {UNITY_VERSION} through Unity Hub / VRChat Creator Companion.")
@@ -477,7 +539,7 @@ def prepare_unity(input_folder, project=None):
         destination = destination.with_name(destination.name + "-" + uuid.uuid4().hex[:6])
     log_path = folder / "unity-setup.log"
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    environment = os.environ.copy()
+    environment = unity_environment()
     private_dotnet = ROOT / ".runtime" / "dotnet"
     if (private_dotnet / "dotnet.exe").exists():
         environment["DOTNET_ROOT"] = str(private_dotnet)
