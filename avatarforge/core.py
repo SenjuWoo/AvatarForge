@@ -518,6 +518,8 @@ def prepare_unity(input_folder, project=None, approved_physics=None):
     if not (folder / "model.fbx").is_file() or not (folder / "report.json").is_file():
         raise ValueError("Choose a completed conversion folder.")
     with _unity_preparation_lock(folder):
+        if read_json(folder / "report.json").get("status") == "blocked":
+            raise ValueError("Conversion is blocked. Repair its reported errors and reconvert before preparing Unity.")
         if approved_physics is not None:
             _write_physics_approval(folder, approved_physics)
         return _prepare_unity(folder, project)

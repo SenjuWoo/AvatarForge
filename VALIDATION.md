@@ -1,6 +1,8 @@
 # Observed validation
 
-## 0.2.8 repair checks (2026-10-07 and 2026-10-08)
+## 0.2.8 repair checks (2026-10-07 through 2026-10-09)
+
+- Native Windows image probes saved and reloaded identical PNG pixels at 259 characters; ordinary paths at 260, 267 and 300 failed. Extended prefixes could write those PNGs but did not make ordinary reloads or long Blender-file opening reliable. Texture export failures now block conversion with a shorter-path instruction; the native suite exercises a real unwritable PNG and the Windows boundary, and Unity preparation refuses blocked conversions before starting setup or changing physics approvals.
 
 - Standard-library, contract and JavaScript syntax checks passed after the canonical Windows path repair. The HTTP tests exercise actual token, Host, Origin and bounded JSON handling.
 - Native Blender regression verified follower joint world orientation, required attachment targets, colliding bone/vertex-group names, untouched source-image pixels and earlier bakes, and transparent/holdout review behavior. Required bones, shape keys and weighted-bone names survive actual FBX reimport.

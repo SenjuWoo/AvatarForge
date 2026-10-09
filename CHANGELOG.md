@@ -2,6 +2,7 @@
 
 ## 0.2.8
 
+- Block failed texture exports instead of treating missing exported PNGs as a completed conversion. Windows texture paths at the native 260-character boundary give a shorter-folder instruction, and Unity preparation rejects blocked conversions before starting setup or changing physics approvals.
 - Ignore source-selected projection/cage bake settings during per-surface conversion. Multi-mesh materials no longer bake only onto the active object, which produced transparent arms and legs on Mimi.
 - Restore the missing Windows profile location for Unity Package Manager in filtered AI/MCP child environments; interactive Open Unity uses the same recovery without changing parent settings.
 - Serialize each conversion's Unity setup, reports and physics approvals across separate AI clients. A conflicting request reports that preparation is already running, and operating-system locks release when a worker exits.

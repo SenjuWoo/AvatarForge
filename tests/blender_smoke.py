@@ -297,6 +297,28 @@ def custom_surface_regressions():
     assert transparent in tree.nodes[:] and not any(node.type == "BSDF_PRINCIPLED" for node in tree.nodes)
 
 
+def texture_failure_regressions(folder):
+    outputs = [(folder / "fixture-unwritable-png", False)]
+    if sys.platform == "win32":
+        # The output itself stays short enough for diagnostic FBX/report files.
+        long_output = folder / ("long-" + "x" * (238 - len(str(folder)) - 6))
+        assert len(str(long_output)) == 238
+        outputs.append((long_output, True))
+    for output, long_path in outputs:
+        source, _ = fixture(folder)
+        before = source.read_bytes()
+        if not long_path:
+            (output / "textures" / "000_FixtureAlbedo.png").mkdir(parents=True)
+        result = run({"source": str(source), "output": str(output), "preset": "preserve",
+                      "options": {"preview": False, "bake_materials": False}})
+        errors = [item for item in result["issues"] if item["code"] == "texture_export_failed"]
+        assert result["status"] == "blocked" and errors, result["issues"]
+        assert all(item["severity"] == "error" for item in errors)
+        if long_path:
+            assert any("shorter output folder" in item["message"] for item in errors)
+        assert source.read_bytes() == before
+
+
 def main():
     folder = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
     folder.mkdir(parents=True, exist_ok=True)
@@ -1112,6 +1134,7 @@ def main():
     accessory_parts(folder / "follower-control-target", "CTRL_Unused")
     follower_group_collision()
     custom_surface_regressions()
+    texture_failure_regressions(folder)
     # Leave a stable ordinary input for CLI/UI smoke checks after this suite.
     fixture(folder)
     print("AVATARFORGE_SMOKE_PASS " + json.dumps({"bones": len(expected_bones), "shape_keys": 2, "presets": 3, "fbx_roundtrip": True, "udim_atlas_pixels": True, "material_bake_pixels": True, "batch_bake_pixels": True, "inherited_bake_settings_ignored": True, "generated_hierarchy_rest_positions": True, "dropped_influence_rejected": True, "decimation_influence_fallback": True, "authored_defaults_visibility_masks_render_uv": True, "repeating_tile_bake_pixels": True, "eight_uv_preservation": True, "scalar_alpha": True, "reopened_unmasked_backup": True, "reopened_source_material_backup": True, "video_preview_state_restored": True, "reserved_basis_morph_deformation_defaults": True, "autopack_portable_texture_pixels": True, "collision_body_selected": True, "explicit_hidden_collection_geometry": True, "disconnected_surface_review": True, "subdivision_review": True, "shared_mesh_mask_isolation": True, "numbered_game_joint_tree_rest_positions": True, "vrchat_extra_spine_direct_parent": True, "vrchat_chest_neck_direct_parent": True, "sparse_skin_cluster_bone_weight_morph_retention": True, "custom_surface_appearance_bake": True, "accessory_parts_parented": True, "preserve_source_bake_resolution": True, "integer_vector_custom_properties": True, "unselectable_mesh_exported": True}))

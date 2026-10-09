@@ -17,6 +17,20 @@ from avatarforge.bone_aliases import map_humanoid
 
 
 class LocalEngineChecks(unittest.TestCase):
+    def test_unity_preparation_rejects_blocked_conversion_before_approval_changes(self):
+        from avatarforge.core import prepare_unity
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "model.fbx").write_bytes(b"diagnostic export")
+            write_json(folder / "report.json", {"status": "blocked"})
+            write_json(folder / "unity-overrides.json", {"approved_physics": ["Breast.L"]})
+            before = (folder / "unity-overrides.json").read_bytes()
+            with patch("avatarforge.core._prepare_unity") as native:
+                with self.assertRaisesRegex(ValueError, "Conversion is blocked"):
+                    prepare_unity(folder, approved_physics=[])
+                native.assert_not_called()
+            self.assertEqual((folder / "unity-overrides.json").read_bytes(), before)
+
     def test_scan_selects_models_not_textures_or_source_rig_scripts(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp)

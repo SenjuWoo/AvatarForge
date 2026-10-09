@@ -2200,6 +2200,9 @@ def texture_manifest(meshes, source, output, preset, options, report):
             relative = "textures/" + f"{index:03d}_{stem}.png"
             copy.filepath_raw = str(output / relative)
             copy.file_format = "PNG"
+            if sys.platform == "win32" and len(copy.filepath_raw) >= 260:
+                raise ValueError("Blender cannot reliably save and reopen Windows texture paths of 260 or more characters. "
+                                 "Choose a shorter output folder or move AvatarForge to a shorter installation path.")
             copy.save()
             if copy.packed_file:
                 # Keep the portable resized PNG authoritative rather than stale packed bytes.
@@ -2211,7 +2214,7 @@ def texture_manifest(meshes, source, output, preset, options, report):
             paths[copy] = relative
             manifest.append({"name": image.name, "path": relative, "size": list(copy.size), "colorspace": image.colorspace_settings.name})
         except Exception as exc:
-            issue(report, "warning", "texture_export_failed", image.name + ": " + str(exc))
+            issue(report, "error", "texture_export_failed", image.name + ": " + str(exc))
     converted = []
     for material in materials:
         entry = {"name": material.name, "base_color": list(material.diffuse_color), "base_color_texture": None,

@@ -9,6 +9,8 @@ Normal conversions use **no AI, account, or API credits**. A mesh with no rig st
 
 **[Download the current release](https://github.com/SenjuWoo/AvatarForge/releases/latest)** → extract the ZIP into its own folder → double-click **INSTALL-TOOLS.bat**. That installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
 
+On Windows, use a short installation/output path. The bundled Blender cannot reliably save and reopen ordinary texture paths of 260 or more characters. AvatarForge blocks failed texture exports and explains how to shorten the path; it preserves the source and diagnostic output.
+
 Keep the application in its own folder, outside AI skill directories. **Connect AI** in the interface, or **CONNECT-AI.bat**, registers the optional local tools. Skill folders receive only the small AvatarForge usage skill.
 
 ![AvatarForge local interface with a generated test model](docs/ui-preview.jpg)
