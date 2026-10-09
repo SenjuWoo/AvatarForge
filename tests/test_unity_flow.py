@@ -45,9 +45,19 @@ class UnityEnvironmentChecks(unittest.TestCase):
                 self.assertEqual(core.unity_environment()["ALLUSERSPROFILE"], "selected-profile")
         environment = {key: value for key, value in os.environ.items() if key not in {"ALLUSERSPROFILE", "PROGRAMDATA"}}
         with patch.dict(os.environ, environment, clear=True):
-            self.assertTrue(Path(core.unity_environment()["ALLUSERSPROFILE"]).is_dir())
+            recovered = core.unity_environment()
+            self.assertTrue(Path(recovered["ALLUSERSPROFILE"]).is_dir())
+            self.assertEqual(recovered["PROGRAMDATA"], recovered["ALLUSERSPROFILE"])
             self.assertNotIn("ALLUSERSPROFILE", os.environ)
             self.assertNotIn("PROGRAMDATA", os.environ)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Package Manager environment")
+    def test_missing_programdata_uses_profile_without_changing_parent(self):
+        with patch.dict(os.environ, {"ALLUSERSPROFILE": "selected-profile"}, clear=True):
+            self.assertEqual(core.unity_environment(), {"ALLUSERSPROFILE": "selected-profile", "PROGRAMDATA": "selected-profile"})
+            self.assertNotIn("PROGRAMDATA", os.environ)
+            with patch.dict(os.environ, {"PROGRAMDATA": "selected-programdata"}):
+                self.assertEqual(core.unity_environment(), dict(os.environ))
 
 
 class UnityFailureChecks(unittest.TestCase):

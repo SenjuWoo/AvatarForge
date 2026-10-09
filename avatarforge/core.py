@@ -460,15 +460,17 @@ class Jobs:
 def unity_environment():
     """Restore Windows' UPM profile path when an AI host filters its environment."""
     environment = os.environ.copy()
-    if os.name == "nt" and not environment.get("ALLUSERSPROFILE"):
-        path = environment.get("PROGRAMDATA")
+    if os.name == "nt" and any(not environment.get(key) for key in ("ALLUSERSPROFILE", "PROGRAMDATA")):
+        path = environment.get("PROGRAMDATA") or environment.get("ALLUSERSPROFILE")
         if not path:
             import ctypes
             buffer = ctypes.create_unicode_buffer(260)
             if ctypes.windll.shell32.SHGetFolderPathW(None, 0x23, None, 0, buffer):  # CSIDL_COMMON_APPDATA
                 raise ValueError("Windows could not locate ProgramData for Unity Package Manager.")
             path = buffer.value
-        environment["ALLUSERSPROFILE"] = path
+        for key in ("ALLUSERSPROFILE", "PROGRAMDATA"):
+            if not environment.get(key):
+                environment[key] = path
     return environment
 
 
