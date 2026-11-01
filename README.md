@@ -7,6 +7,7 @@
 # AvatarForge
 
 <p>
+  <a href="https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml"><img src="https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/SenjuWoo/AvatarForge/releases/latest"><img src="https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?label=release" alt="Current release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
