@@ -1,7 +1,17 @@
+<p align="center">
+  <img src="assets/mark.svg" width="72" height="72" alt="AvatarForge">
+</p>
+
+<div align="center">
+
 # AvatarForge
 
-[![Current release](https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?label=release)](https://github.com/SenjuWoo/AvatarForge/releases/latest)
-[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<p>
+  <a href="https://github.com/SenjuWoo/AvatarForge/releases/latest"><img src="https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?label=release" alt="Current release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
+</div>
 
 Local workbench that turns a downloaded character into a reviewed Unity project for VRChat. Give it a Blender file, an XNALara or XPS mesh, an MMD `.pmx` or `.pmd`, a VRM, a Source or Source Filmmaker export, or a ZIP from SmutBase, SFMLab, or a similar gallery. Conversion runs on your machine through Blender. Shape keys, skin weights, and secondary bones stay in the export, then AvatarForge prepares a prefab and preview scene for the VRChat SDK.
 
