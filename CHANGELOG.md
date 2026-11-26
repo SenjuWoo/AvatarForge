@@ -5,7 +5,7 @@
 - README rebuilt around a cover image, real proof images and a command table taken from the CLI parser. Added the `unity`, `connect`, `mcp`, `--options`, `--output` and `--blender` entries the old README left out.
 - Proof images come from real runs: a generated CC0 test mannequin (`docs/presentation/demo_model.py`) converted with the balanced preset and its exported FBX rendered in Blender (`docs/presentation/render_fbx.py`).
 - Corrected the Collada note: Blender 5.0 and later ship no Collada importer (the README said 5.2).
-- Documentation only; the application, installer and package are unchanged.
+- Documentation only: the application and installer are unchanged and no release was cut. The next release ZIP (a `git archive` of the tree) will include these docs and images.
 
 ## 0.2.8
 

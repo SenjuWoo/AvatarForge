@@ -6,7 +6,7 @@
 [![CodeQL](https://github.com/SenjuWoo/AvatarForge/actions/workflows/codeql.yml/badge.svg)](https://github.com/SenjuWoo/AvatarForge/actions/workflows/codeql.yml)
 [![Release](https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?color=91e8c2)](https://github.com/SenjuWoo/AvatarForge/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.10%2B-5B4BA8)](pyproject.toml)
-[![Platform](https://img.shields.io/badge/one--click-Windows%2010%2F11%20x64-f0c887)](#install)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-f0c887)](#install)
 [![License: MIT](https://img.shields.io/badge/license-MIT-91e8c2)](LICENSE)
 
 **[Install](#install)** · **[Workflow](#the-normal-workflow)** · **[Formats](#formats)** · **[CLI](#cli-and-checks)** · **[AI](#optional-ai-and-ultimate-ai-starter-bundle)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)**
