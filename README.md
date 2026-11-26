@@ -1,22 +1,42 @@
-<p align="center">
-  <img src="assets/mark.svg" width="72" height="72" alt="AvatarForge">
-</p>
-
 <div align="center">
 
-# AvatarForge
+![AvatarForge: a purple A mark beside the tagline 'Downloaded character in, reviewed VRChat Unity project out. Shape keys, weights and secondary bones survive.' with chips for XPS, MMD, VRM, Source/SFM, FBX round-trip and Unity prefab](docs/presentation/hero.png)
 
-<p>
-  <a href="https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml"><img src="https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/SenjuWoo/AvatarForge/releases/latest"><img src="https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?label=release" alt="Current release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
-</p>
+[![Verify](https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml/badge.svg)](https://github.com/SenjuWoo/AvatarForge/actions/workflows/verify.yml)
+[![CodeQL](https://github.com/SenjuWoo/AvatarForge/actions/workflows/codeql.yml/badge.svg)](https://github.com/SenjuWoo/AvatarForge/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/SenjuWoo/AvatarForge?color=91e8c2)](https://github.com/SenjuWoo/AvatarForge/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.10%2B-5B4BA8)](pyproject.toml)
+[![Platform](https://img.shields.io/badge/one--click-Windows%2010%2F11%20x64-f0c887)](#install)
+[![License: MIT](https://img.shields.io/badge/license-MIT-91e8c2)](LICENSE)
+
+**[Install](#install)** · **[Workflow](#the-normal-workflow)** · **[Formats](#formats)** · **[CLI](#cli-and-checks)** · **[AI](#optional-ai-and-ultimate-ai-starter-bundle)** · **[How it works](#how-it-works)** · **[Changelog](CHANGELOG.md)**
 
 </div>
 
-Local workbench that turns a downloaded character into a reviewed Unity project for VRChat. Give it a Blender file, an XNALara or XPS mesh, an MMD `.pmx` or `.pmd`, a VRM, a Source or Source Filmmaker export, or a ZIP from SmutBase, SFMLab, or a similar gallery. Conversion runs on your machine through Blender. Shape keys, skin weights, and secondary bones stay in the export, then AvatarForge prepares a prefab and preview scene for the VRChat SDK.
+AvatarForge is a local workbench that turns a downloaded character into a reviewed Unity project for VRChat. Give it a Blender file, an XNALara or XPS mesh, an MMD `.pmx` or `.pmd`, a VRM, a Source or Source Filmmaker export, or a ZIP from SmutBase, SFMLab, or a similar gallery. Conversion runs on your machine through Blender. Shape keys, skin weights, and secondary bones stay in the export, then AvatarForge prepares a prefab and preview scene for the VRChat SDK.
 
 Normal conversions use **no AI, account, or API credits**. A mesh with no rig still needs an armature before it can become a Humanoid avatar. `needs_review` means the files exist and the report lists what to inspect. AvatarForge does not upload the avatar.
+
+## What you get
+
+- **Nothing silently dropped.** Weighted bones, secondary bones (hair, breasts, butt, tail, clothing) and shape keys are kept. The exported FBX is imported back into Blender and checked for every required bone, every expected weighted bone and every shape-key group.
+- **One local interface.** Browse to a model, folder or ZIP, pick Preserve, PC balanced or Mobile candidate, review the preview and checks, then prepare Unity.
+- **A Unity project, not just an FBX.** Humanoid import with a calibrated T-pose (or a Generic preview for rigs that are not human), reconstructed materials, restored shape-key values, selected PhysBones, a prefab and a `Preview.unity` scene, and a VRChat descriptor when the SDK is present.
+- **Your source stays untouched.** Every conversion writes into a new `outputs/<job>/` folder, source file hashes are checked before and after, embedded Blender scripts are never enabled, and Blender runs with an isolated profile.
+- **Honest verdicts.** `ready`, `needs_review` and `blocked` say what was checked. VRChat SDK build validation is recorded separately.
+- **Pinned, checksummed tools.** The installer downloads official archives, verifies their checksums before extraction and keeps everything under `.runtime/`. No global PATH, model, trust or AI-provider settings change.
+
+![Terminal: a generated test mannequin (2336 vertices, 24 bones, 3 shape keys) is converted with the balanced preset; the job completes with 4560 triangles, 2 materials, 24 of 24 bones weighted, 3 shape keys and 2 textures, hair and breast PhysBone candidates, no missing required Humanoid bones, an FBX reimport that retained every required bone and shape key, and the source file unchanged](docs/presentation/screenshot-convert.png)
+
+The same conversion's `model.fbx`, imported back into Blender and rendered. The middle panel draws every exported bone, with the hair and breast chains in orange; the right column shows the exported Smile and Blink shape keys at full weight:
+
+![Blender 5.3 render of the converted model.fbx: a textured mannequin in T-pose with 4560 triangles, 2 materials and 2 textures; the same model from a three-quarter view with all 24 exported bones drawn, 5 of them secondary hair and breast bones; and face close-ups, neutral and with the Smile and Blink shape keys at 1.0](docs/presentation/conversion-render.png)
+
+The test mannequin is built by [`docs/presentation/demo_model.py`](docs/presentation/demo_model.py) and rendered by [`docs/presentation/render_fbx.py`](docs/presentation/render_fbx.py), so both images can be regenerated. Its verdict is `needs_review` only because that checkout had no importer add-ons installed (`addon_path_missing`).
+
+![AvatarForge local interface with a generated test model](docs/ui-preview.jpg)
+
+## Install
 
 **[Download the current release](https://github.com/SenjuWoo/AvatarForge/releases/latest)** → extract the ZIP into its own folder → double-click **INSTALL-TOOLS.bat**. That installs the verified conversion tools and opens the local interface. After setup, use **START-HERE.bat**.
 
@@ -24,11 +44,19 @@ On Windows, use a short installation/output path. The bundled Blender cannot rel
 
 Keep the application in its own folder, outside AI skill directories. **Connect AI** in the interface, or **CONNECT-AI.bat**, registers the optional local tools. Skill folders receive only the small AvatarForge usage skill.
 
-![AvatarForge local interface with a generated test model](docs/ui-preview.jpg)
+After updating AvatarForge, close its interface and start it again; reload or restart connected AI clients so their local server loads the updated engine.
 
-![AvatarForge Connect AI panel with client selection and optional project scope](docs/ai-connect.jpg)
+This distribution is the complete checkout/ZIP, not a standalone Python wheel. Windows 10/11 x64 is the one-click target. Python 3.10+ can run the CLI on other platforms when compatible Blender/importers are already installed.
 
-Connect AI checks the local server and preserves your existing client settings. Client activation is verified after its restart or reload. After updating AvatarForge, close its interface and start it again; reload or restart connected AI clients so their local server loads the updated engine.
+### Tools and installation
+
+The Windows installer downloads pinned official archives and verifies their published/recorded checksums before extraction. Tools stay under `.runtime/`; no global PATH, model, trust or AI-provider settings are changed. Re-running installation verifies its local install receipts.
+
+Blender, SourceIO, Source Tools, MMD Tools, VRM and XPS importer downloads can be installed locally. Unity and the VRChat SDK are obtained through their official channels. Unity project creation uses official VPM and the supported editor version, with a new short project path under `%USERPROFILE%\AvatarForgeProjects\`.
+
+The maintained XPS extension is GPL and installs from its pinned official source. Legacy XPS addons with unverified redistribution terms are linked separately. VRCFury uses its own distribution terms and official installer. The full list, licenses and links are in [docs/dependencies.md](docs/dependencies.md). No supplied character model or user Unity project is included in this repository.
+
+Existing Unity project: add `unity/Packages/dev.senjuwoo.avatarforge/package.json` using **Package Manager → Add package from disk**, then **AvatarForge → Import conversion folder**. The importer creates new assets and preserves existing scene work.
 
 ## The normal workflow
 
@@ -81,7 +109,7 @@ Unrigged meshes import and export. They need an armature and skin weights before
 | MMD `.pmx`, `.pmd` | MMD Tools |
 | `.vrm` | VRM Add-on for Blender |
 | XNALara/XPS `.xps`, `.mesh`, `.ascii` | Pinned GPL XPS extension with Blender 5.0+; legacy addons can use Advanced controls |
-| `.dae` | Blender 4.5 importer or convert to FBX/glTF; Blender 5.2 removed Collada import |
+| `.dae` | Blender 4.5 importer, or convert to FBX/glTF; Blender 5.0 and later ship no Collada importer |
 | ZIP packs from model sites | Extracted into a new folder, then select the model |
 
 For a differently named VTA, set `vta_filepath` in Advanced options; `vta_mesh` selects its reference mesh when several meshes exist. Morph names and nonzero deformation are checked, followed by actual FBX preservation.
@@ -96,23 +124,13 @@ Set `target_triangles` in Advanced options for a custom PC/mobile target; the sa
 
 `ready` means the stage's recorded checks passed. `needs_review` means an artifact exists with explicit open items. `blocked` means a required capability or integrity check failed. VRChat SDK build validation is recorded separately; no avatar is uploaded automatically.
 
-## Tools and installation
-
-The Windows installer downloads pinned official archives and verifies their published/recorded checksums before extraction. Tools stay under `.runtime/`; no global PATH, model, trust or AI-provider settings are changed. Re-running installation verifies its local install receipts.
-
-Blender, SourceIO, Source Tools, MMD Tools, VRM and XPS importer downloads can be installed locally. Unity and the VRChat SDK are obtained through their official channels. Unity project creation uses official VPM and the supported editor version, with a new short project path under `%USERPROFILE%\AvatarForgeProjects\`.
-
-The maintained XPS extension is GPL and installs from its pinned official source. Legacy XPS addons with unverified redistribution terms are linked separately. VRCFury uses its own distribution terms and official installer. The full list, licenses and links are in [docs/dependencies.md](docs/dependencies.md). No supplied character model or user Unity project is included in this repository.
-
-Existing Unity project: add `unity/Packages/dev.senjuwoo.avatarforge/package.json` using **Package Manager → Add package from disk**, then **AvatarForge → Import conversion folder**. The importer creates new assets and preserves existing scene work.
-
-This distribution is the complete checkout/ZIP, not a standalone Python wheel. Windows 10/11 x64 is the one-click target. Python 3.10+ can run the CLI on other platforms when compatible Blender/importers are already installed.
-
 ## Optional AI and Ultimate AI Starter Bundle
 
 AvatarForge works independently. It pairs with [Ultimate-AI-Starter-Bundle](https://github.com/SenjuWoo/Ultimate-AI-Starter-Bundle) when you want an AI to inspect a report, select meshes, supply a bone map or repair a difficult source in Blender/Unity. No bundle fork or extra always-on engine server is required.
 
-Click **Connect AI**, choose your installed clients and connect. Configuration changes are backed up, merge only AvatarForge's server, and preserve other servers, model choices, tool filters and trust. Reload the client afterward. For project-only access, enter that project folder; unsupported project scopes are reported without changing global settings.
+![AvatarForge Connect AI panel with client selection and optional project scope](docs/ai-connect.jpg)
+
+Click **Connect AI**, choose your installed clients and connect. Connect AI checks the local server, backs up configuration changes, merges only AvatarForge's server, and preserves other servers, model choices, tool filters and trust. Client activation is verified after its restart or reload. For project-only access, enter that project folder; unsupported project scopes are reported without changing global settings.
 
 Reviewed Windows adapters cover Codex, Claude Code/Desktop, Cursor, Gemini CLI, GitHub Copilot, VS Code, Windsurf/Devin, OpenCode and Hermes. Hermes uses its installed configuration API and requires the app/gateway to be closed. Unknown clients can use the generated generic stdio entry. A web-only chat needs a compatible local bridge; changing the AI model does not require re-registering AvatarForge.
 
@@ -135,6 +153,16 @@ Provider format references and configuration/backup behavior: [AI integration](d
 
 ## CLI and checks
 
+| Need | Command (from the AvatarForge folder) |
+|---|---|
+| Open the local interface (default) | `run.py ui [--port N] [--no-browser] [--output DIR]` |
+| Tool paths, presets, formats, dependency catalog | `run.py doctor` |
+| List model candidates in a file, folder or ZIP | `run.py scan <path>` |
+| Convert one model into a new job folder | `run.py convert <model> [--preset preserve\|balanced\|mobile] [--options options.json] [--output DIR] [--blender blender.exe]` |
+| Prepare a fresh VRChat SDK Unity project from a completed conversion | `run.py unity <conversion folder>` |
+| Register the MCP server with AI clients | `run.py connect [--providers auto\|codex claude-code ...] [--project DIR]` |
+| Run the stdio MCP server | `run.py mcp [--output DIR]` |
+
 ```powershell
 .\.runtime\python\python.exe run.py doctor
 .\.runtime\python\python.exe run.py scan "C:\Models\Character"
@@ -142,10 +170,34 @@ Provider format references and configuration/backup behavior: [AI integration](d
 .\.runtime\python\python.exe -m unittest discover -s tests -v
 ```
 
-The real Blender regression generates its own humanoid/secondary-bone/shape-key/UDIM fixture:
+`convert` prints the job id first, then the final job record; it exits 1 when the job does not complete. The real Blender regression generates its own humanoid/secondary-bone/shape-key/UDIM fixture:
 
 ```powershell
 blender.exe --background --factory-startup --disable-autoexec --python-exit-code 1 --python tests/blender_smoke.py -- validation/blender-smoke
 ```
 
-See [VALIDATION.md](VALIDATION.md) for observed engine versions, tested paths and remaining runtime gaps. Third-party dependency/source licenses remain with their authors; AvatarForge's own code is MIT.
+![Terminal: python -m unittest discover runs 56 tests with OK, tools/check_contract.py prints AVATARFORGE_CONTRACT_PASS 0.2.8, and node --check web/app.js passes](docs/presentation/screenshot-tests.png)
+
+CI ([Verify](.github/workflows/verify.yml)) runs on a fresh Windows runner: the standard-library tests, the distribution contract, a PowerShell installer parse and receipt/recovery regression, then installs the pinned Blender and importers and runs the real Blender preservation, add-on and format suites. [CodeQL](.github/workflows/codeql.yml) analyses the Python with every default query. See [VALIDATION.md](VALIDATION.md) for observed engine versions, tested paths and remaining runtime gaps.
+
+## How it works
+
+```mermaid
+flowchart LR
+  SRC["Model, folder or ZIP (read-only)"] -->|"scan: candidates, safe ZIP extraction"| PICK["chosen model"]
+  PICK -->|"background Blender, isolated profile, no embedded scripts"| CONV["import · texture/UDIM · bake · rig selection · preset reduction"]
+  CONV --> OUT[("outputs/job: model.blend, model.fbx, textures, preview, report.json")]
+  OUT -->|"FBX reimport check: bones, weights, shape keys"| OUT
+  OUT -->|"prepare Unity: VPM project + AvatarForge package"| UNITY["Humanoid or Generic import · materials · shape values · PhysBones"]
+  UNITY --> PREFAB["Avatar.prefab + Preview.unity"]
+  PREFAB -->|"you run the VRChat SDK checks and upload"| VRC["VRChat"]
+```
+
+- **Deterministic and local.** The UI binds only to `127.0.0.1`; commands need its random session token, a loopback Host header and a matching browser Origin when present. AI and live-editor MCP are optional repair tools.
+- **Argv arrays only.** Model names and paths are never composed into shell commands.
+- **Archives are untrusted.** Extraction checks canonical containment, rejects unsafe names and links, and streams each member.
+- **Verdicts name their evidence.** A conversion verdict covers the Blender/FBX stage; a Unity verdict references the saved prefab and scene; SDK build validation and upload stay with you.
+
+More detail: [workflow and troubleshooting](docs/workflow.md), [VRChat requirements](docs/vrchat-requirements.md), [dependencies and licenses](docs/dependencies.md), [AI integration](docs/ai-integration.md), [validation evidence](VALIDATION.md), [changelog](CHANGELOG.md).
+
+Third-party dependency/source licenses remain with their authors; AvatarForge's own code is MIT.

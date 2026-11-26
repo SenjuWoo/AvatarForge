@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- README rebuilt around a cover image, real proof images and a command table taken from the CLI parser. Added the `unity`, `connect`, `mcp`, `--options`, `--output` and `--blender` entries the old README left out.
+- Proof images come from real runs: a generated CC0 test mannequin (`docs/presentation/demo_model.py`) converted with the balanced preset and its exported FBX rendered in Blender (`docs/presentation/render_fbx.py`).
+- Corrected the Collada note: Blender 5.0 and later ship no Collada importer (the README said 5.2).
+- Documentation only; the application, installer and package are unchanged.
+
 ## 0.2.8
 
 - Block failed texture exports instead of treating missing exported PNGs as a completed conversion. Windows texture paths at the native 260-character boundary give a shorter-folder instruction, and Unity preparation rejects blocked conversions before starting setup or changing physics approvals.
@@ -7,7 +14,7 @@
 - Restore the missing Windows profile location for Unity Package Manager in filtered AI/MCP child environments; interactive Open Unity uses the same recovery without changing parent settings.
 - Serialize each conversion's Unity setup, reports and physics approvals across separate AI clients. A conflicting request reports that preparation is already running, and operating-system locks release when a worker exits.
 - Preserve truly absent SDK environment variables on PowerShell 7.5+ as well as Windows PowerShell 5.1; installer regression launches the actual host executable.
-- Keep Grok's broader rig naming, visible-surface baking, source-resolution presets and follower-rig support, with native regression repairs.
+- Keep the broader rig naming, visible-surface baking, source-resolution presets and follower-rig support, with native regression repairs.
 - Shield every other material slot during custom-surface baking so source images, saved source graphs and earlier baked maps are not overwritten. Custom transparent/holdout surfaces retain their source graph and receive an explicit review item instead of being flattened into an opaque material.
 - Preserve follower joint orientation, required attachment targets and skin weights through bone/group name collisions. Missing attachment targets stop conversion instead of silently exporting detached geometry.
 - Validate actual imported Humanoid ancestry before calibration. Complete names with disconnected limb chains retain a Generic prefab and preview scene with a repair report, including Mimi-style mechanical hip rigs.
